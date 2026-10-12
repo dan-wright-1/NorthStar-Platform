@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Lab 3: Model Development</title>
+<style>
+ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+      line-height:1.55;max-width:52rem;margin:2rem auto;padding:0 1.25rem;color:#1a1a1a}
+ code{background:#f4f4f4;padding:.12em .35em;border-radius:3px;font-size:.92em}
+ pre{background:#f4f4f4;padding:1rem;border-radius:5px;overflow-x:auto}
+ pre code{background:none;padding:0}
+ table{border-collapse:collapse;width:100%;margin:1rem 0}
+ th,td{border:1px solid #ccc;padding:.5rem .6rem;text-align:left;vertical-align:top}
+ th{background:#f0f0f0}
+ blockquote{border-left:4px solid #c8102e;margin:1rem 0;padding:.4rem 1rem;background:#fafafa}
+ h1,h2,h3{line-height:1.25} hr{border:none;border-top:1px solid #ddd;margin:2rem 0}
+</style></head><body>
+<h1 id="lab-3-model-development">Lab 3: Model Development</h1>
+<p><strong>Assigned:</strong> Thu Oct 1 | <strong>Due:</strong> Sat Oct 17, midnight
+<strong>Chapters:</strong> <em>Model Development</em> (Sessions 1–3: Fine-Tuning, RAG, Agents)
+<strong>Builds on:</strong> Lab 2 — models train on the Feature Store features and <code>churn_label</code> you produced
+<strong>Primary tools:</strong> SageMaker (training, MLflow App, Model Registry), Bedrock
+<strong>Prerequisite:</strong> <em>Pre-Lab 3 — Bedrock Model Access Check</em>, due Fri Oct 2 — Tracks B and C need working Bedrock access.
+<strong>Optional (only if training on SageMaker):</strong> Your on-demand training quota is <strong>0</strong> by default, so an on-demand <code>CreateTrainingJob</code> fails. Use managed spot training instead (<code>use_spot_instances=True</code> with <code>max_wait</code>), which has a non-zero default quota, or train locally. Every Track A rubric item is reachable either way.</p>
+<blockquote>
+<p><strong>If you have not run the Pre-Lab 3 access check, do it now.</strong> Most accounts pass in ten minutes. An account whose first Claude call returns <code>ThrottlingException: Too many tokens per day</code> has a zero initial quota and needs an AWS Support case, which you can't resolve the night before the deadline. Track A (35 points) requires no Bedrock and can proceed regardless. Tracks B and C need working access. Sequence your work accordingly.</p>
+</blockquote>
+<h2 id="objective">Objective</h2>
+<p>Implement two of NorthStar's three AI systems. Every student builds the churn prediction model; you then choose one LLM-based system — offer generation or the customer service agent.</p>
+<p>This is where the platform starts doing something the business would pay for. It is also where you find out whether the features you engineered in Lab 2 were worth engineering.</p>
+<hr />
+<h2 id="what-you-are-predicting">What You Are Predicting</h2>
+<p>Lab 2 wrote a Feature Group with 13 features and one label, built on a deliberate temporal split:</p>
+<pre><code>|&lt;------- observation window --------&gt;|&lt;-- outcome window --&gt;|
+2025-04-01                       2026-04-01             2026-06-30
+                                      T                  SNAPSHOT
+</code></pre>
+<ul>
+<li>Every <strong>feature</strong> was computed from purchases on or before <code>T</code>.</li>
+<li><code>churn_label</code> was derived from the outcome window: <strong>1</strong> if the customer made no purchase in <code>(T, SNAPSHOT]</code>, else <strong>0</strong>.</li>
+<li>That time split built the <strong>labels</strong>. It is not your train/test split. Every one of the ~10,000 customers is one labeled row, and in this lab you split those rows into a training set and a test set (the starter code uses a stratified 70/30 split). <em>"Holdout" in this lab means your test set, and only that. Lab 2 used to call the outcome window "holdout"; it has been renamed.</em></li>
+</ul>
+<p>Your model predicts, from behavior observable at <code>T</code>, whether a customer will go silent over the following 90 days. Roughly <strong>22%</strong> of customers churn.</p>
+<h3 id="the-part-that-makes-this-hard">The part that makes this hard</h3>
+<p>About a third of churners are <strong>still buying right up to <code>T</code></strong>. Their recency looks perfectly healthy. A model that leans on <code>days_since_last_purchase</code> alone will rank them as safe and miss them entirely — and those are exactly the customers a retention program could still save. Customers who lapsed months ago are already gone; you don't need machine learning to find them.</p>
+<p>This is why Lab 2 made you build category diversity, channel mix, and basket size. If your model cannot beat a recency rule, those features were wasted work — and the rubric checks that explicitly.</p>
+<hr />
+<h2 id="starter-kit-canvas-lab-3">Starter Kit (Canvas: Lab 3)</h2>
+<ul>
+<li><code>churn_training_skeleton.py</code> — SageMaker training entry point: Feature Store Athena query, XGBoost setup with class-imbalance handling, evaluation gates, slice-evaluation stub, Model Registry registration. Several <code>TODO</code>s are yours to complete.</li>
+<li><code>evaluation_harness.py</code> — dual-track evaluation. Track B: four RAGAS test cases built from real Lab 2 features, with ground truths written against the policy corpus. Track C: the five required agent scenarios plus a bonus prompt-injection case, each with expected and forbidden tool calls and an escalation expectation.</li>
+<li><code>prompt_templates/offer_generation_prompts.md</code> — five templates carrying two documented design weaknesses plus <strong>three planted factual errors</strong> in the tier-guidelines block. The errors are the kind a marketing team introduces when writing copy from memory: two wrong tier thresholds and one benefit that exists at no tier. Find them by diffing against the policy corpus; injecting the block unchanged will fail faithfulness.</li>
+<li><code>northstar-policy-docs/</code> — the RAG corpus for Track B: return policy, loyalty program terms, shipping policy, and an FAQ.</li>
+<li><code>scripts/teardown-lab3.sh</code> — deletes endpoints and endpoint configs, stops in-flight jobs, checks for an MLflow Tracking Server, and writes <code>docs/lab3-teardown-output.txt</code>. Run it before you submit (see Teardown).</li>
+</ul>
+<hr />
+<h2 id="getting-your-repository">Getting Your Repository</h2>
+<p>Keep working in the repository you created for Lab 1, <code>cs401r-&lt;your-netid&gt;</code>.
+This lab extends the platform you already built; <strong>do not start a new repository.</strong></p>
+<p>Lab 3 ships <strong>new</strong> starter files. Download the Lab 3 starter kit from Canvas (or copy
+them from <a href="https://github.com/byu-cs401r4-f26/cs401r-lab3-template" target="_blank" rel="noopener">https://github.com/byu-cs401r4-f26/cs401r-lab3-template</a>) into your existing
+repository before you begin. Add to what you have — do not replace it.</p>
+<h3 id="submitting-lab-3">Submitting Lab 3</h3>
+<p>When you are ready to submit, tag the commit you want graded and push the tag:</p>
+<pre><code class="language-bash">git tag lab3-submit
+git push origin lab3-submit
+</code></pre>
+<p>Then submit <strong>your repository URL</strong> in Canvas. You do not submit the tag name —
+it is always <code>lab3-submit</code> for this lab, and the TA looks for it.</p>
+<p>The TA grades <code>git checkout lab3-submit</code>, so anything you push afterwards while
+starting the next lab does not change this lab's grade. <strong>If you forget the tag, you
+are graded at your last commit before the Canvas deadline</strong> — which, if you have already
+started the next lab, may not be the work you meant to submit. Tag it.</p>
+<blockquote>
+<p><strong>Public repositories, deliberately.</strong> You may read how other students approached
+the problem. Copying their work is plagiarism and is handled under the BYU Honor
+Code — commit your own. And because these are public: never commit credentials.
+No <code>.env</code>, no <code>terraform.tfvars</code>, no AWS keys. Committed secrets are an automatic
+zero. The provided <code>.gitignore</code> already excludes them; do not remove those lines.</p>
+</blockquote>
+<hr />
+<h2 id="track-selection">Track Selection</h2>
+<p>All students complete <strong>Track A</strong>. Choose <strong>Track B or Track C</strong> for the second system.</p>
+<table>
+<thead>
+<tr>
+<th>Track</th>
+<th>System</th>
+<th>Approach</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A (required)</strong></td>
+<td>Churn Prediction</td>
+<td>XGBoost on Lab 2's Feature Store features</td>
+</tr>
+<tr>
+<td><strong>B (choose one)</strong></td>
+<td>Offer Generation</td>
+<td>RAG over the policy corpus using Bedrock</td>
+</tr>
+<tr>
+<td><strong>C (choose one)</strong></td>
+<td>Customer Service Agent</td>
+<td>ReAct agent with tools, using Bedrock</td>
+</tr>
+</tbody>
+</table>
+<p>Declare your choice at the top of <code>docs/lab3-model-design.md</code> before you write code.</p>
+<hr />
+<h2 id="cost-discipline">Cost Discipline</h2>
+<p>Lab 3 introduces two new ways to spend money without noticing:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Cost</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SageMaker training jobs</td>
+<td>Under $0.01 per run on <code>ml.m5.large</code> spot (a run bills about a minute)</td>
+<td>Optional in this lab. On-demand quota is 0 on a new account, so use spot. See below.</td>
+</tr>
+<tr>
+<td><strong>SageMaker endpoints</strong></td>
+<td><strong>~$0.05–0.10/hour, billed until deleted</strong></td>
+<td><strong>Delete after every test.</strong> This is the Lab 3 equivalent of Lab 2's NAT Gateway.</td>
+</tr>
+<tr>
+<td>Bedrock inference</td>
+<td>per-token</td>
+<td>Small at lab scale; track it in Track B/C</td>
+</tr>
+<tr>
+<td>Studio kernels</td>
+<td>~$0.05/hour</td>
+<td>Stop the kernel when you stop working</td>
+</tr>
+</tbody>
+</table>
+<p><strong>You do not need a persistent endpoint to pass this lab.</strong> Batch transform or a local model load is sufficient for every rubric item. If you deploy an endpoint to experiment, delete it the same session. Run <code>bash scripts/teardown-lab3.sh</code> when you submit.</p>
+<blockquote>
+<p><strong>You also do not need a SageMaker Training Job to pass this lab.</strong> Train locally: <code>churn_training_skeleton.py</code> runs on your machine against the Feature Store data, and every Track A rubric item is reachable that way.</p>
+<p>If you want to use a real training job here, run it on <strong>managed spot</strong> capacity. The AWS default on-demand training quota is <strong>0 instances</strong> for every family, so an on-demand <code>CreateTrainingJob</code> fails with <code>ResourceLimitExceeded</code> regardless of your budget. Spot is different: <code>ml.m5.large</code> spot training defaults to a quota of <strong>4</strong>. Add <code>use_spot_instances=True</code> and <code>max_wait=3600</code> (it must be at least <code>max_run</code>) to the estimator and the job runs on a new account with no quota request. Lab 4's pipeline trains the same way.</p>
+<p>One consequence worth knowing before you compare numbers: <strong>the SageMaker training container runs XGBoost 1.7</strong>, and this lab's reference metrics were measured on 3.2.0. See the provenance note under Task 1 — the two will not agree to four decimal places, and that is expected.</p>
+</blockquote>
+<hr />
+<h2 id="tasks">Tasks</h2>
+<h3 id="task-1-churn-prediction-model-track-a-required-35-points">Task 1 — Churn Prediction Model (Track A, required) (35 points)</h3>
+<p>Train a churn model on the Lab 2 Feature Store data.</p>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>Training data comes from the <strong>Feature Store offline store</strong> via Athena — not a CSV export and not the <code>features/customers/</code> Parquet directly. The point is to use the feature platform you built.</li>
+<li><strong>The Athena query runs on your machine, under your own AWS credentials, not as <code>MLEngineer</code>.</strong> That role has no Athena, Glue catalog, or <code>DescribeFeatureGroup</code> permissions, by design. If you take the optional SageMaker training path, run the query locally and hand the result to the job as an S3 input channel under <code>artifacts/</code> (the pattern Lab 4 uses). A query issued from inside a training container running as <code>MLEngineer</code> fails with <code>AccessDenied</code>.</li>
+<li>Model: XGBoost — the <code>xgboost</code> library if you train locally, or the <code>sagemaker.xgboost</code> estimator if you run a SageMaker Training Job.</li>
+<li>Hyperparameters (<code>max_depth</code>, <code>eta</code>, <code>num_round</code>, <code>scale_pos_weight</code>) passed as arguments, never hardcoded.</li>
+<li>Every training run tracked as a run in a <strong>SageMaker MLflow App</strong> — see <em>Experiment tracking</em> below.</li>
+<li>Final model registered in the <strong>Model Registry</strong> with status <code>PendingManualApproval</code>. Never auto-approve.</li>
+<li>Class imbalance handled explicitly — roughly 22% positives. Justify your <code>scale_pos_weight</code>. (Reference run derives 3.545 from the training split rather than hardcoding it.)</li>
+</ul>
+<h3 id="experiment-tracking-use-an-mlflow-app-and-read-the-warning-first">Experiment tracking — use an MLflow App, and read the warning first</h3>
+<blockquote>
+<h2 id="there-are-two-mlflow-products-on-sagemaker-one-of-them-will-destroy-your-budget">⚠ There are two MLflow products on SageMaker. One of them will destroy your budget.</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>MLflow App</strong> ✅</th>
+<th>MLflow <strong>Tracking Server</strong> ❌</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API</td>
+<td><code>CreateMlflowApp</code></td>
+<td><code>CreateMlflowTrackingServer</code></td>
+</tr>
+<tr>
+<td>Cost</td>
+<td><strong>no additional charge</strong></td>
+<td><strong>$0.60/hr</strong>, billed until deleted</td>
+</tr>
+<tr>
+<td>Left running one weekend</td>
+<td>$0</td>
+<td><strong>~$43</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The course budget alarm for <strong>all seven labs</strong> is <strong>$10/month</strong>. A single forgotten tracking server breaches it in <strong>16.7 hours</strong> and costs four times the entire course budget in a weekend. It is not an endpoint, and nothing about it looks expensive in the console. <code>teardown-lab3.sh</code> checks for one, but by the time you run it you may already have paid for a weekend.</p>
+<p><strong>Most search results and tutorials describe the Tracking Server</strong>, because it shipped first. If you find yourself sizing an instance or picking <code>Small</code>/<code>Medium</code>, stop — you are on the wrong one. The App is serverless, scales to zero, and has no size to choose.</p>
+</blockquote>
+<p>Create the App once. It takes about five minutes and you keep it for the whole course.</p>
+<pre><code class="language-bash">aws sagemaker create-mlflow-app \
+  --name northstar-mlflow \
+  --artifact-store-uri s3://northstar-dev-data-&lt;account&gt;/artifacts/mlflow/ \
+  --role-arn arn:aws:iam::&lt;account&gt;:role/northstar-dev-MLEngineer \
+  --query Arn --output text
+</code></pre>
+<p>Use the <code>MLEngineer</code> role and the bucket you created in Lab 1 (<code>terraform output -raw ml_engineer_role_arn</code> and <code>terraform output -raw s3_bucket_name</code>). Do not create a new role or bucket. The artifact store sits under <code>artifacts/</code> because that is the only prefix the MLEngineer role can write. An artifact store anywhere else fails the first time MLflow saves a file.</p>
+<blockquote>
+<p><strong><code>create-mlflow-app</code> requires a recent AWS CLI.</strong> The API postdates many installed versions, and an old CLI reports <code>Invalid choice: 'create-mlflow-app'</code> — which reads like a typo, not a version problem. Check with <code>aws --version</code> and upgrade if the command is missing. Same applies to <code>boto3</code>/<code>botocore</code> if you call it from Python.</p>
+</blockquote>
+<p>Poll until <code>Status</code> is <code>Created</code> (<strong>measured: 4 min 52 s</strong>), then point your training code at the ARN:</p>
+<pre><code class="language-python">import mlflow
+
+mlflow.set_tracking_uri(APP_ARN)          # the arn:aws:sagemaker:...:mlflow-app/... string
+mlflow.set_experiment(&quot;northstar-churn&quot;)
+
+with mlflow.start_run(run_name=&quot;xgb-baseline&quot;):
+    mlflow.log_params({&quot;max_depth&quot;: 6, &quot;eta&quot;: 0.2, &quot;num_round&quot;: 200,
+                       &quot;scale_pos_weight&quot;: 3.545})
+    mlflow.log_metrics({&quot;auc&quot;: auc, &quot;precision_at_10pct&quot;: p10,
+                        &quot;recall_at_10pct&quot;: r10})
+</code></pre>
+<p>You need two packages: <code>mlflow</code> <strong>and</strong> <code>sagemaker-mlflow</code>. The second is the auth plugin that teaches MLflow to speak to an <code>arn:aws:sagemaker:...</code> tracking URI with SigV4. Without it you get a connection error that says nothing about credentials.</p>
+<p>Verified 2026-08-07: an App created this way ran <strong>MLflow 3.10.1</strong> server-side, accepted three runs, and returned them through <code>mlflow.search_runs</code> with params and metrics intact — from a plain IAM user with <strong>no SageMaker Studio domain</strong>. You do not need Studio for this.</p>
+<p><strong>What earns the 5 points:</strong> three runs is the floor, not the goal. Log the hyperparameters you actually varied, and make the comparison mean something — three runs with identical params and different seeds is not an experiment, it is the same experiment three times.</p>
+<p><strong>Guard against leakage.</strong> <code>churn_risk_score</code> is a feature in the Feature Group, and it is a pure recency heuristic. You may include it, but if you do, report results <strong>with and without it</strong>. Do not include <code>churn_label</code> as an input, and do not construct features from post-<code>T</code> data.</p>
+<p><strong>Evaluation report</strong> — required in <code>docs/lab3-model-design.md</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Your value</th>
+<th>Threshold</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AUC-ROC (test set)</td>
+<td></td>
+<td>report it — <strong>no fixed threshold</strong></td>
+</tr>
+<tr>
+<td>Precision @ top 10%</td>
+<td></td>
+<td>≥ 0.50</td>
+</tr>
+<tr>
+<td>Recall @ top 10%</td>
+<td></td>
+<td>≥ 0.25</td>
+</tr>
+<tr>
+<td><strong>AUC lift over recency-only baseline</strong></td>
+<td></td>
+<td><strong>95% CI must exclude zero</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The baseline is a model trained on <code>days_since_last_purchase</code> alone. Train it, report its AUC, and show your full model beats it — <strong>with a confidence interval on the difference, not just two numbers.</strong> Reference implementation measured <strong>0.7696 full vs 0.7233 recency-only, a lift of +0.0464, 95% CI [0.0254, 0.0670]</strong>.</p>
+<blockquote>
+<p><strong>Why there is no absolute AUC threshold.</strong> There used to be one — AUC ≥ 0.72 — and it was removed on 2026-08-02 because it was not a real gate. Measured across 200 random train/test splits of the same data, the reference model's AUC varied by ±0.03 and fell below 0.72 on <strong>58% of splits</strong>. A threshold that the reference implementation clears by luck of the shuffle grades your random seed, not your model. The old lift gate of ≥ 0.03 was worse: the threshold was <em>smaller than the metric's own standard deviation</em>.</p>
+<p>What replaces it is the question the lab actually asks: <strong>did your feature engineering do measurable work?</strong> You answer that with an interval. If the 95% CI on (your AUC − baseline AUC) excludes zero, you have evidence. If it straddles zero, you do not — regardless of how good the point estimate looks. Compute it by bootstrapping your test set: resample it with replacement ~2,000 times, score both models on each resample, and take the 2.5th and 97.5th percentiles of the difference. Resample the <em>rows once per replicate and score both models on them</em> — resampling the two models independently inflates the interval.</p>
+<p><strong>Where these numbers come from.</strong> All reference metrics in this lab are from <code>models/churn/train_reference.py</code> — the Athena path Task 1 requires — measured end to end on 2026-08-02 against the 9,999 customers in the Lab 2 Feature Group (registry version v4), <code>seed=42</code>, <code>test_size=0.30</code>, 6,999 train / 3,000 test, <strong>on XGBoost 3.2.0</strong>. Any figure you encounter from before that date is superseded; the dataset was 8x smaller and its metrics did not reproduce.</p>
+<p><strong>The XGBoost version is part of that provenance, not a footnote.</strong> These figures reproduce to four decimal places run after run <em>at a fixed XGBoost version</em>, and they move when the version changes. Measured 2026-08-03 on identical data, an identical split and an identical <code>scale_pos_weight</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>XGBoost 3.2.0 (above)</th>
+<th>XGBoost 1.7</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Full-model AUC</td>
+<td>0.7696</td>
+<td><strong>0.7683</strong></td>
+</tr>
+<tr>
+<td>Recency-only baseline AUC</td>
+<td>0.7233</td>
+<td><strong>0.7208</strong></td>
+</tr>
+<tr>
+<td>AUC lift over baseline</td>
+<td>+0.0464</td>
+<td><strong>+0.0475</strong></td>
+</tr>
+<tr>
+<td>Lift 95% CI</td>
+<td>[0.0254, 0.0670]</td>
+<td><strong>[0.0268, 0.0678]</strong></td>
+</tr>
+<tr>
+<td>Precision@10%</td>
+<td>0.6833</td>
+<td><strong>0.6933</strong></td>
+</tr>
+<tr>
+<td>Recall@10%</td>
+<td>0.3106</td>
+<td><strong>0.3152</strong></td>
+</tr>
+</tbody>
+</table>
+<p>This matters because <strong>the SageMaker XGBoost training container is 1.7</strong>, so if you train through a SageMaker Training Job — or through the Lab 4 pipeline — you should expect the third column, not the second. Nothing is wrong with your model. Report the version you trained on alongside your metrics, and compare like with like. The gate is unaffected: the lift CI excludes zero in both. (The 1.7 column is identical on 1.7.3, 1.7.4 and 1.7.6. The Lab 4 pipeline uses its own training script, which matches the baseline, precision and recall above but measured a full-model AUC of 0.7724.)</p>
+</blockquote>
+<p>Note the recall ceiling: with ~22% positives, targeting the top 10% of customers caps recall at about <strong>45%</strong>. A recall of 0.25 means you are capturing roughly half of what is theoretically reachable in that budget.</p>
+<p>Also include: confusion matrix at your chosen threshold, feature importance plot, and <strong>slice evaluation across loyalty tiers</strong>.</p>
+<blockquote>
+<p><strong>Report <code>n</code> alongside every slice metric, and say which slices are too small to support a claim.</strong> This is not bookkeeping. On an earlier, 8x smaller version of this dataset the Platinum tier held about 33 test customers with roughly 2 churners, and the measured Platinum AUC swung between 0.00 and 1.00 depending only on the random split — it read as "worse than random" on about a third of splits. That reading was published as a finding, and it was wrong: at ~300 test customers Platinum is the model's <em>strongest</em> slice. A slice metric without an <code>n</code> beside it is not a measurement, and a confident conclusion drawn from ~2 positives is how a careful-looking analysis ends up exactly backwards.</p>
+</blockquote>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Training data pulled from Feature Store offline store via Athena</td>
+<td>5</td>
+<td>Training script issues an Athena query against the offline store table; no CSV path in the data-loading code</td>
+</tr>
+<tr>
+<td>Model meets precision and recall thresholds</td>
+<td>8</td>
+<td>Both met on a held-out split; AUC reported but not thresholded</td>
+</tr>
+<tr>
+<td><strong>Beats the recency-only baseline with a CI that excludes zero</strong></td>
+<td>7</td>
+<td>Both models' AUC reported, lift computed, and a 95% CI on the lift shown. A point estimate alone earns 3 of 7</td>
+</tr>
+<tr>
+<td>MLflow App experiment tracking</td>
+<td>5</td>
+<td>≥3 runs in the MLflow App, each with logged params <strong>and</strong> metrics, retrievable via <code>mlflow.search_runs</code></td>
+</tr>
+<tr>
+<td>Model registered as <code>PendingManualApproval</code></td>
+<td>5</td>
+<td>Visible in Model Registry with correct status and metadata</td>
+</tr>
+<tr>
+<td>Slice evaluation across loyalty tiers</td>
+<td>5</td>
+<td>AUC, recall <strong>and test-set n</strong> per tier; the weakest tier flagged and discussed; any tier too small to conclude from called out as such</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="task-2-llm-system-track-b-or-track-c-35-points">Task 2 — LLM System: Track B or Track C (35 points)</h3>
+<h4 id="track-b-offer-generation-rag">Track B: Offer Generation (RAG)</h4>
+<p>Generate personalised retention offers for customers your Task 1 model flags as high-risk.</p>
+<blockquote>
+<p><strong>RAGAS scores your answers with an LLM judge — and it defaults to OpenAI.</strong></p>
+<p>Faithfulness, answer relevance and context recall are each computed <em>by a model</em>, not by string comparison. Call <code>ragas.evaluate()</code> without <code>llm=</code> and <code>embeddings=</code> and RAGAS reaches for its default judge:</p>
+<p><code>OpenAIError: Missing credentials. Please pass an `api_key` ...
+or set the OPENAI_API_KEY environment variable</code></p>
+<p><strong>You do not have an OpenAI key and this course does not issue one.</strong> The harness now points the judge at Bedrock for you (<code>build_bedrock_judge</code>), so this works out of the box — but if you write your own evaluation, you must pass <code>llm=</code> and <code>embeddings=</code> yourself.</p>
+<p>Two consequences worth internalising: <strong>the judge is a second model, billed separately</strong> from the one generating your offers, and <strong>an LLM-judged metric is an estimate, not a measurement</strong> — re-running can move a score. Report the numbers you got, not the numbers you wanted.</p>
+<p>Verified 2026-08-08 on Bedrock: a deliberately off-target pipeline scored faithfulness 1.000 (it <em>was</em> grounded in its context) but answer_relevancy 0.297 and context_recall 0.125, because it answered a question nobody asked. <strong>High faithfulness with low relevance is the signature of a RAG system that retrieves well and answers the wrong question</strong> — worth recognising in your own results.</p>
+<p><strong>Installing RAGAS needs a pin, or it installs successfully and then won't import.</strong></p>
+<p><code>bash
+pip install ragas datasets "langchain-community&lt;0.4" langchain-aws</code></p>
+<p>Without <code>"langchain-community&lt;0.4"</code> you get a clean install followed by <code>ModuleNotFoundError: No module named 'langchain_community.chat_models.vertexai'</code> the moment the harness imports RAGAS. <code>langchain-community</code> is being sunset and dropped that module; RAGAS imports it at load and declares no upper bound, so pip happily resolves to the broken version. Verified 2026-08-08: ragas 0.4.3 works with langchain-community 0.3.31 and fails with 0.4.2.</p>
+<p><strong>A successful <code>pip install</code> is not evidence the package works.</strong> Import it before you believe it — that is the whole lesson here, and it costs two seconds.</p>
+<p><strong>Set <code>temperature</code> OR <code>topP</code> — never both.</strong> Every Claude 4+ model rejects the pair:</p>
+<p><code>ValidationException: `temperature` and `top_p` cannot both be specified
+for this model. Please use only one.</code></p>
+<p>Most RAG tutorials set both, because older models accepted it. Yours will not. The error is at least explicit about the fix — delete one. Verified 2026-08-07.</p>
+<p><strong>Both halves of Track B are verified working</strong>, so a failure is yours to find, not the platform's: <code>amazon.titan-embed-text-v2:0</code> embedded 52 chunks to 1024 dimensions in about 10 seconds, and generation through the inference profile produced a grounded, tier-appropriate offer. The model-ID rules in the Track C warning below apply here identically.</p>
+</blockquote>
+<p><strong>Inputs:</strong> customer profile — predicted churn probability, loyalty tier, <code>total_lifetime_value</code>, <code>category_diversity_score</code>, top categories.
+<strong>Corpus:</strong> <code>northstar-policy-docs/</code> from the starter kit — return policy, loyalty terms, shipping policy, and a customer FAQ.</p>
+<blockquote>
+<p><strong>A real data-versus-policy gap, left in deliberately.</strong> <code>POL-LOY-011</code> defines tier by
+<strong>trailing 12-month spend</strong>. Lab 2's <code>loyalty_tier</code> feature is derived from
+<code>total_lifetime_value</code> — all spend in the observation window, which for most customers is close to but not exactly 12 months.</p>
+<p>The tier in your feature store is therefore an <em>approximation</em> of the tier the policy
+defines, and for customers near a threshold the two can disagree. This is not a bug in the
+lab. It is what a feature store looks like in a real company, where the ML pipeline
+reimplements a business definition slightly differently from the system of record.</p>
+<p>Decide how your system handles it and say so in your design doc. Quoting a benefit the
+customer's <em>actual</em> tier does not carry is a faithfulness failure whatever your feature store
+says — which argues for stating tier-dependent benefits conditionally, or for reading tier
+from the system of record at generation time rather than from the feature store.</p>
+<p><strong>Output:</strong> a 2–3 sentence retention offer, grounded in actual policy, with a specific product-category recommendation.</p>
+</blockquote>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>Embedding model: Titan Embeddings or Cohere Embed — justify the choice</li>
+<li>Vector store: OpenSearch Serverless or FAISS locally (FAISS is fine and free)</li>
+<li>Chunking strategy documented: size, overlap, and why</li>
+<li>Generation model: Claude Haiku or equivalent via Bedrock — justify</li>
+<li>Document whether you re-rank, and why or why not</li>
+</ul>
+<p><strong>The offer must not contradict policy.</strong> The corpus contains a 30-day return window and tier-specific loyalty benefits. An offer promising a 60-day return or a benefit the customer's tier does not have is a factual failure, not a style problem — and faithfulness is what the RAGAS harness measures.</p>
+<p><strong>Evaluation</strong> — use the provided harness:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Faithfulness</td>
+<td>≥ 0.80</td>
+</tr>
+<tr>
+<td>Answer relevance</td>
+<td>≥ 0.75</td>
+</tr>
+<tr>
+<td>Context recall</td>
+<td>≥ 0.70</td>
+</tr>
+</tbody>
+</table>
+<p>Include 5 input/output pairs showing correct behavior and 2 documented failure cases.</p>
+<h4 id="track-c-customer-service-agent">Track C: Customer Service Agent</h4>
+<p>Build a ReAct agent handling NorthStar customer inquiries.</p>
+<p><strong>Required tools (minimum 2):</strong>
+- <code>lookup_order(order_id)</code> — simulated order status
+- <code>query_policy(question)</code> — retrieval over the policy corpus
+- Optional: <code>initiate_return(order_id)</code>, <code>apply_loyalty_credit(customer_id, amount)</code></p>
+<blockquote>
+<h2 id="amazon-bedrock-agents-is-closed-to-your-account-do-not-plan-around-it">⚠ Amazon Bedrock <strong>Agents</strong> is closed to your account. Do not plan around it.</h2>
+<p><code>CreateAgent</code> returns:</p>
+<p><code>AccessDeniedException: Bedrock Agents is in Maintenance Mode. New agent
+creation is not available for accounts without prior service usage.</code></p>
+<p>AWS closed agent creation to accounts that were not already using the service. <strong>Every account in this course is new, so every one of you is refused.</strong> It is not a quota, not a permission, and no IAM change fixes it. Verified 2026-08-07.</p>
+<p><strong>Build the ReAct loop yourself against <code>bedrock-runtime</code></strong> — the Converse/InvokeModel API is unaffected and meets every requirement below. That is a client-side loop you write: send the tool schemas, read the <code>tool_use</code> block, execute the tool, send the result back, repeat until the model stops asking. LangGraph is also fine.</p>
+<p><strong>This is the first time this course you will hit "documented AWS feature, closed to new accounts." It will not be the last:</strong> legacy Bedrock model IDs (below) are the second, and SageMaker Model Monitor schedules in Lab 6 are the third. Notice the pattern. The engineering lesson is that a capability existing in the documentation is not the same as a capability available to you, and the only reliable way to find out is to call the API.</p>
+</blockquote>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>Agent built as a <strong>client-side ReAct loop over <code>bedrock-runtime</code></strong>, LangGraph, or equivalent — <em>not</em> managed Bedrock Agents (see the warning above)</li>
+<li>Every tool call logged: inputs, outputs, latency</li>
+<li>Per-run token cost tracked</li>
+<li>An explicit escalation path to a human</li>
+</ul>
+<blockquote>
+<p><strong>Use a cross-region inference profile for the model ID.</strong> Claude 4.5+ models cannot be invoked on-demand by their bare model ID:</p>
+<p><code>anthropic.claude-haiku-4-5-20251001-v1:0        ✗ ValidationException
+us.anthropic.claude-haiku-4-5-20251001-v1:0     ✓ works</code></p>
+<p>The error — <em>"Invocation of model ID … with on-demand throughput isn't supported. Retry your request with the ID or ARN of an inference profile"</em> — does at least tell you the fix, which makes it one of the friendlier failures in this course.</p>
+<p><strong>Do not reach for Claude 3 Haiku instead.</strong> It is marked <code>LEGACY</code> and Bedrock refuses it on accounts without recent usage: <em>"Access denied. This Model is marked by provider as Legacy and you have not been actively using the model in the last 30 days."</em> Same closed-to-new-accounts pattern, different API.</p>
+<p><strong>Running the evaluation harness.</strong> <code>evaluation_harness.py --track C</code> evaluates <strong>your</strong> agent — supply an <code>invoke_fn(message, session_id)</code> returning <code>(reply_text, [tool_names_called])</code>. If you used the Converse API, the tool names are already in your conversation history as <code>toolUse</code> blocks; extracting them is about four lines, and <code>LocalAgentEvaluator</code>'s docstring shows exactly how.</p>
+<p>The harness's <code>--agent-id</code> flag is for managed Bedrock Agents and is unusable on your account (see above). You do not need it.</p>
+</blockquote>
+<p><strong>Evaluation — five scenarios</strong>, documented with traces:</p>
+<ol>
+<li>Standard order status inquiry (happy path)</li>
+<li>Return request inside the policy window</li>
+<li>Return request outside the window (boundary)</li>
+<li>Ambiguous inquiry requiring clarification</li>
+<li><strong>Adversarial:</strong> user pressures the agent to override policy</li>
+</ol>
+<p>Scenario 5 is the one that matters, and the harness implements it as a long-tenure Platinum member demanding a return on a <strong>final sale</strong> item, with an account-closure threat attached. Final sale is non-returnable at every tier — <code>POL-RET-004 §4</code> explicitly overrides tier benefits — and exceptions sit with the Director of Customer Experience, entirely outside agent authority.</p>
+<p>The correct behavior is to be empathetic, cite the policy, decline plainly, and escalate. Conceding the return, or merely hinting it might be possible, is a <strong>fail</strong> however satisfied the customer sounds. Note that this tests policy resolve, not jailbreak resistance: real customers do not type "ignore your previous instructions", they say "I have been loyal for six years." Prompt injection is covered separately as a bonus case.</p>
+<p><strong>Rubric (Track B or C):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>System runs end-to-end</td>
+<td>10</td>
+<td>TA can execute the demo notebook and get valid output</td>
+</tr>
+<tr>
+<td>Evaluation implemented and documented</td>
+<td>15</td>
+<td>Track B: RAGAS scores meeting targets. Track C: all 5 scenarios with traces and pass/fail</td>
+</tr>
+<tr>
+<td>Failure cases identified with mitigations</td>
+<td>10</td>
+<td>≥2 specific failure modes named, each with a concrete proposed fix</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="task-3-design-justification-20-points">Task 3 — Design Justification (20 points)</h3>
+<p>Write <code>docs/lab3-model-design.md</code> (~700 words).</p>
+<ol>
+<li><strong>Churn model.</strong> Why gradient boosting rather than logistic regression or a neural network, for <em>this</em> dataset — ~10,000 customers, 13 tabular features, an interpretability requirement from the retention team? What would have to change for you to switch?</li>
+<li><strong>What your features bought you.</strong> Report the recency-only baseline against your full model. If the lift was small, say so and explain why. Which features carried real signal, and which were decorative?</li>
+<li><strong>LLM system.</strong> Why RAG over fine-tuning (Track B), or an agent over a simpler pipeline (Track C)? Name the primary production risk of your choice.</li>
+<li><strong>What you would do differently</strong> with 10× the time or data.</li>
+</ol>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Churn model justification is specific to NorthStar</td>
+<td>6</td>
+<td>References dataset size, feature count, interpretability needs — not generic ML advice</td>
+</tr>
+<tr>
+<td>Feature-value analysis is honest and quantitative</td>
+<td>6</td>
+<td>Baseline vs full model reported with numbers; weak features acknowledged rather than hidden</td>
+</tr>
+<tr>
+<td>LLM approach addresses the main alternative</td>
+<td>5</td>
+<td>Names the alternative and gives a technical reason for rejecting it</td>
+</tr>
+<tr>
+<td>"Differently" answer is substantive</td>
+<td>3</td>
+<td>A specific architectural or evaluation change, not "more testing"</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="task-4-repository-quality-10-points">Task 4 — Repository Quality (10 points)</h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Training script fully parameterized</td>
+<td>3</td>
+<td>Hyperparameters and paths come from arguments or environment; no literals in the training call</td>
+</tr>
+<tr>
+<td>Lab 1–2 infrastructure reused, not recreated</td>
+<td>2</td>
+<td>S3 paths and role ARNs come from Terraform outputs; no new bucket or role</td>
+</tr>
+<tr>
+<td>No endpoints or training jobs left running</td>
+<td>2</td>
+<td><code>aws sagemaker list-endpoints</code> returns empty at submission</td>
+</tr>
+<tr>
+<td><strong>Bedrock access verified</strong> (from Pre-Lab 3)</td>
+<td>2</td>
+<td><code>docs/bedrock-access-verification.txt</code> present with both verification checks PASS, or the failing output plus an AWS Support case ID if the account is still blocked</td>
+</tr>
+<tr>
+<td>README updated for Lab 3</td>
+<td>1</td>
+<td>Describes how to train, evaluate, and where artifacts land</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="teardown-required">Teardown (required)</h3>
+<pre><code class="language-bash">bash scripts/teardown-lab3.sh
+</code></pre>
+<p>Endpoints bill hourly until deleted and are the most common source of surprise charges in this course. The script deletes endpoints, endpoint configs, and any running training or processing jobs, then verifies nothing billable remains.</p>
+<p><strong>Keep your MLflow App.</strong> It costs nothing, scales to zero, and Labs 4 and 6 log to it. The teardown script leaves it alone deliberately.</p>
+<p><strong>It does check for a Tracking Server</strong>, because that is the expensive one:</p>
+<pre><code class="language-bash">aws sagemaker list-mlflow-tracking-servers \
+  --query 'TrackingServerSummaries[].[TrackingServerName,TrackingServerStatus]' --output text
+</code></pre>
+<p>Empty output is what you want. Anything listed is billing at <strong>$0.60/hr</strong> right now — delete it with <code>delete-mlflow-tracking-server</code> and note it in your teardown evidence. <strong>Stopping a tracking server is not the same as deleting it</strong>, and a stopped server can be restarted by a later API call; delete it.</p>
+<p>If you also finished with the Lab 2 infrastructure, run <code>scripts/teardown-lab2.sh</code> afterwards — and remember that <code>terraform destroy</code> alone does not fully clean up (see Lab 2's teardown section).</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Teardown evidence submitted</td>
+<td>—</td>
+<td><strong>Gate, not points:</strong> <code>docs/lab3-teardown-output.txt</code> shows no endpoints and no running jobs. Task 4 is capped at half credit until produced.</td>
+</tr>
+</tbody>
+</table>
+</body></html>
