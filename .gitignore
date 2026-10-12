@@ -11,3 +11,7 @@ __pycache__/
 
 # LocalStack runtime data (docker-compose volume) - includes a self-signed test key
 .localstack/
+
+# Python virtualenv (Lab 3 training)
+.venv/
+.build/

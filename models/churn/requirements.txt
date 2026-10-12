@@ -1,0 +1,12 @@
+# Local training environment for models/churn/train.py (Python 3.12).
+# No `sagemaker` SDK: the Athena query uses boto3 directly, and sagemaker 3.x
+# removed the feature_store package the starter skeleton imported.
+boto3
+numpy
+pandas
+pyarrow
+scikit-learn
+xgboost
+matplotlib
+mlflow
+sagemaker-mlflow
