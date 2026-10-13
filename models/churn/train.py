@@ -86,6 +86,10 @@ def parse_args():
     parser.add_argument("--max-depth", type=int, default=6)
     parser.add_argument("--eta", type=float, default=0.1)
     parser.add_argument("--num-round", type=int, default=200)
+    parser.add_argument("--early-stopping-rounds", type=int, default=20,
+                        help="Stop when the inner validation AUC has not improved for this many rounds")
+    parser.add_argument("--verbose-eval", type=int, default=25,
+                        help="Print training metrics every N rounds")
     parser.add_argument("--min-child-weight", type=int, default=5)
     parser.add_argument("--subsample", type=float, default=0.8)
     parser.add_argument("--colsample-bytree", type=float, default=0.8)
@@ -400,8 +404,8 @@ def train_model(X_train: np.ndarray,
         dtrain=dtrain,
         num_boost_round=args.num_round,
         evals=[(dtrain, "train"), (dstop, "stop")],
-        early_stopping_rounds=20,
-        verbose_eval=25,
+        early_stopping_rounds=args.early_stopping_rounds,
+        verbose_eval=args.verbose_eval,
     )
     print(f"  best iteration: {model.best_iteration}")
     return model
@@ -761,6 +765,7 @@ def track_run(args, metrics: dict, slices: dict, feature_columns: list[str],
             "max_depth": args.max_depth,
             "eta": args.eta,
             "num_round": args.num_round,
+            "early_stopping_rounds": args.early_stopping_rounds,
             "min_child_weight": args.min_child_weight,
             "subsample": args.subsample,
             "colsample_bytree": args.colsample_bytree,
