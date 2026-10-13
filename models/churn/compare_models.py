@@ -52,7 +52,8 @@ def main():
 
     # XGBoost: the config train.py selected (d4 / eta 0.1)
     xargs = SimpleNamespace(max_depth=4, eta=0.1, num_round=200, min_child_weight=5, subsample=0.8,
-                            colsample_bytree=0.8, scale_pos_weight=None, seed=a.seed)
+                            colsample_bytree=0.8, scale_pos_weight=None, seed=a.seed,
+                            early_stopping_rounds=20, verbose_eval=25)
     booster = T.train_model(Xtr, ytr, X[stop_idx], y[stop_idx], xargs, cols)
     p_xgb = T.predict_proba(booster, Xte, cols)
 
