@@ -1,0 +1,42 @@
+{
+  "n_train": 5949,
+  "n_test": 3000,
+  "models": {
+    "xgboost": {
+      "auc": 0.7831,
+      "precision_top10": 0.74,
+      "recall_top10": 0.3364
+    },
+    "logistic_regression": {
+      "auc": 0.7599,
+      "precision_top10": 0.6867,
+      "recall_top10": 0.3121,
+      "xgboost_auc_minus_this_ci95": [
+        0.0097,
+        0.0362
+      ]
+    },
+    "mlp_32_16": {
+      "auc": 0.7646,
+      "precision_top10": 0.7,
+      "recall_top10": 0.3182,
+      "xgboost_auc_minus_this_ci95": [
+        0.0067,
+        0.0303
+      ]
+    }
+  },
+  "logistic_regression_standardized_coefficients": {
+    "days_since_last_purchase": 0.868,
+    "customer_tenure_days": 0.014,
+    "purchase_frequency_30d": -0.332,
+    "purchase_frequency_90d": 0.518,
+    "purchase_frequency_180d": -0.174,
+    "avg_order_value": -0.953,
+    "total_spend_90d": -0.556,
+    "total_lifetime_value": 1.092,
+    "avg_basket_size_6m": -0.07,
+    "category_diversity_score": -0.174,
+    "online_to_store_ratio": -0.157
+  }
+}
