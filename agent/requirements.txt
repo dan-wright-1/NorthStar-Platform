@@ -1,0 +1,7 @@
+boto3
+numpy
+pandas
+# demo notebook
+nbformat
+nbconvert
+ipykernel
