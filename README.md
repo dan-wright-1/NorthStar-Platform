@@ -21,11 +21,23 @@ scripts/
   bootstrap-state.sh   one-time remote-state bucket + lock table setup
   verify-lab1.sh       Lab 1 rubric checks against a live stack
   verify-lab2.sh       Lab 2 rubric checks, incl. data-quality checks on S3 output
+  run-lab3-experiments.sh  Lab 3 churn experiment grid (4 MLflow runs)
+  teardown-lab3.sh     Lab 3 teardown: endpoints, endpoint configs, jobs, tracking servers
   teardown-lab2.sh     full Lab 2 teardown, incl. resources Terraform can't see
   check-secrets.sh     scans all git history for committed credentials
+models/churn/
+  train.py             Lab 3 churn training: Athena -> XGBoost -> evaluation -> MLflow -> registry
+  compare_models.py    XGBoost vs logistic regression vs MLP on the same split
+  requirements.txt     training dependencies
+evaluation/
+  evaluation_harness.py  course harness (Track C scoring via LocalAgentEvaluator)
+agent/                 Lab 3 Track C customer service agent (ReAct loop over Bedrock Converse)
+northstar-policy-docs/ policy corpus the agent retrieves from
 docs/                  Lab 2 graded outputs (lab2-*), data contract, lineage diagram
   lab_1/               Lab 1 diagrams, screenshots, ADR, cost estimate, run outputs
   lab_2/               Lab 2 handout and diagram source
+  lab_3/               Lab 3 handout; results/ (MLflow export, registry, per-run metrics), agent/ (traces)
+  lab3-model-design.md Lab 3 design justification
 ```
 
 ## Lab 2 additions — data and feature engineering
@@ -96,6 +108,77 @@ Both scripts can be tested locally before you pay for a Glue run. Install `pyspa
 stub the `awsglue` imports, and call `cast_types`, `impute_nulls`, `deduplicate` and the
 feature functions on `northstar-raw-sample.csv`.
 
+## Lab 3 — model development
+
+Track C: churn model (XGBoost) plus a customer service agent on Bedrock.
+
+### Setup
+
+Needs the Lab 2 stack up and the Feature Store populated (re-run the feature-engineering
+Glue job after any teardown). Python 3.12:
+
+```bash
+python -m venv .venv && . .venv/Scripts/activate        # Windows Git Bash; use bin/ on macOS/Linux
+pip install -r models/churn/requirements.txt -r agent/requirements.txt
+aws login                                               # then:
+eval "$(aws configure export-credentials --format env)" # exported creds are short-lived; re-run if they expire
+```
+
+### Train and evaluate the churn model
+
+`MLFLOW_APP_ARN` is the ARN of your SageMaker MLflow **App** (serverless, free; never a
+Tracking Server, which bills hourly). It is created outside Terraform.
+
+```bash
+export MLFLOW_APP_ARN=arn:aws:sagemaker:...            # your MLflow App
+bash scripts/run-lab3-experiments.sh                    # 4 configs, each logged to MLflow
+
+# or one run by hand (all paths and hyperparameters are arguments):
+python models/churn/train.py \
+  --artifacts-bucket "$(cd infrastructure/environments/dev && terraform output -raw s3_bucket_name)" \
+  --mlflow-arn "$MLFLOW_APP_ARN" --max-depth 4 --eta 0.1 --run-name my-run
+#   add --register to register the model (PendingManualApproval) if the gates pass
+python models/churn/compare_models.py --artifacts-bucket <bucket>   # vs logistic regression / MLP
+```
+
+Features are read from the Feature Store offline table through Athena, deduplicated to the
+newest record per customer. The 30% test set is untouched until final scoring; early
+stopping and configuration choice use an inner validation split. Gates: precision@top-10%
+>= 0.50, recall@top-10% >= 0.25, and a paired-bootstrap 95% CI on AUC lift over the
+recency-only baseline that excludes zero. Gate failures are logged, not raised.
+
+### Run the agent
+
+```bash
+python agent/run_eval.py                                # 5 required scenarios + bonus injection
+jupyter nbconvert --to notebook --execute agent/demo.ipynb   # demo notebook
+```
+
+Bedrock needs the Anthropic use-case form submitted on the account (model ID
+`us.anthropic.claude-haiku-4-5-20251001-v1:0`); see `docs/bedrock-access-verification.txt`.
+A full six-scenario run costs about $0.04.
+
+### Where artifacts land
+
+| Artifact | Location |
+|---|---|
+| Per-run metrics JSON + feature-importance plot | `docs/lab_3/results/<run-name>/` (kept in git; teardown deletes the S3 copies) |
+| MLflow runs and registry export | `docs/lab_3/results/mlflow-search-runs.csv`, `model-registry.json` |
+| Model package | SageMaker Model Registry group `northstar-churn-models` (PendingManualApproval); artifact under `s3://<bucket>/artifacts/models/churn/` |
+| Model comparison | `docs/lab_3/results/model-comparison.json` |
+| Agent scores and traces | `docs/lab_3/agent/` (`agent_eval.csv`, `agent_traces.json`, `README.md` with failure modes) |
+| Design justification | `docs/lab3-model-design.md` |
+
+### Teardown
+
+```bash
+bash scripts/teardown-lab3.sh        # writes docs/lab3-teardown-output.txt
+bash scripts/teardown-lab2.sh        # when finished with the stack
+```
+
+The MLflow App is kept (free; later labs log to it). Teardown deletes the model artifact in
+S3, so retrain after the next `terraform apply`.
+
 ## Usage
 
 ```bash
@@ -112,7 +195,8 @@ make local-validate                      # LocalStack check, costs nothing
 | Lab | Scope | Tag |
 |---|---|---|
 | 1 | Platform foundation — VPC, S3, IAM, SageMaker Domain, Terraform IaC | `lab1-submit` |
-| 2 | Data and feature engineering — private subnet + NAT, Glue pipeline, Feature Store, data contract | |
+| 2 | Data and feature engineering — private subnet + NAT, Glue pipeline, Feature Store, data contract | `lab2-submit` |
+| 3 | Model development — XGBoost churn model with MLflow and registry; Bedrock customer service agent | `lab3-submit` |
 
 Never commit credentials. `.tfvars`, `.tfstate`, and `.env` are gitignored; keep it
 that way.
