@@ -108,6 +108,28 @@ def test_preprocess_rejects_unknown_or_null_tier():
             raise AssertionError(f"tiers {tiers} should have been rejected")
 
 
+def test_train_model_keeps_only_best_trees():
+    """The returned booster must hold exactly the best trees, so plain predict() equals
+    what we evaluated, and best_iteration / best_score must survive the slice."""
+    import io, contextlib
+    import numpy as np
+    import xgboost as xgb
+    from types import SimpleNamespace
+    from sklearn.datasets import make_classification
+
+    X, y = make_classification(3000, 11, n_informative=4, flip_y=0.25, random_state=0)
+    cols = [f"f{i}" for i in range(11)]
+    args = SimpleNamespace(max_depth=4, eta=0.1, num_round=300, min_child_weight=5, subsample=0.8,
+                           colsample_bytree=0.8, scale_pos_weight=None, seed=42,
+                           early_stopping_rounds=20, verbose_eval=0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = T.train_model(X[:2000], y[:2000], X[2000:2500], y[2000:2500], args, cols)
+    assert model.num_boosted_rounds() == model.best_iteration + 1
+    assert 0.5 < model.best_score <= 1.0
+    dtest = xgb.DMatrix(X[2500:], feature_names=cols)
+    assert np.allclose(model.predict(dtest), T.predict_proba(model, X[2500:], cols))
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -501,6 +501,14 @@ def train_model(X_train: np.ndarray,
         verbose_eval=args.verbose_eval,
     )
     print(f"  best iteration: {model.best_iteration}")
+
+    # Early stopping halts early_stopping_rounds AFTER the best round, so the booster still
+    # holds that many extra trees, and a plain predict() (e.g. in the SageMaker container)
+    # would use them and score differently from what we evaluated. Keep only the best trees.
+    # Slicing drops best_iteration / best_score, which main() and MLflow read, so restore them.
+    best_iteration, best_score = model.best_iteration, model.best_score
+    model = model[: best_iteration + 1]
+    model.set_attr(best_iteration=str(best_iteration), best_score=str(best_score))
     return model
 
 
