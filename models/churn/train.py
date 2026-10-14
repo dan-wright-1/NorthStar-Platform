@@ -30,6 +30,7 @@ are written to --output-data-dir, because teardown deletes the S3 copies.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import tarfile
@@ -79,6 +80,11 @@ def parse_args():
                         help="Your Lab 1 data bucket, northstar-dev-data-<account>. "
                              "Athena results and model artifacts go under its artifacts/ "
                              "prefix, the only prefix your MLEngineer role can write")
+    parser.add_argument("--expected-customers", type=int, default=None,
+                        help="Fail if the load returns a different number of customers. Guards "
+                             "against a re-ingest or window change silently altering the data")
+    parser.add_argument("--athena-timeout", type=int, default=ATHENA_TIMEOUT_S,
+                        help="Seconds to wait for the Athena feature query before stopping it")
     parser.add_argument("--local-data-path", type=str, default=None,
                         help="Path to local feature CSV for development testing (bypasses Feature Store)")
 
@@ -195,17 +201,87 @@ LABEL_COLUMN = "churn_label"
 # both leaks and makes the per-tier fairness check circular.
 SLICE_COLUMN = "loyalty_tier"
 
+# The four tiers in the Lab 2 data contract. A value outside this set would create a
+# bogus slice (or, if null, silently drop rows from slice evaluation).
+LOYALTY_TIERS = ("Bronze", "Silver", "Gold", "Platinum")
+
+# Seconds to wait for the Athena feature query before stopping it and failing.
+ATHENA_TIMEOUT_S = 300
+
 
 def resolve_feature_columns(include_risk_score: bool) -> list[str]:
     """The model's input columns. churn_risk_score is opt-in (see BASELINE_COLUMN)."""
     return FEATURE_COLUMNS + ([BASELINE_COLUMN] if include_risk_score else [])
 
 
+def build_feature_query(table: str,
+                        feature_columns: list[str],
+                        start_epoch: float,
+                        end_epoch: float) -> str:
+    """SQL that returns one row per customer: the newest record, unless that record
+    is a soft-delete marker, in which case the customer is excluded.
+
+    Ranking happens BEFORE the is_deleted filter. A soft delete is a new row with
+    is_deleted = true and the newest event_time, so filtering first would drop the
+    marker and promote the customer's older live row, resurrecting a deleted
+    customer into the training set. Kept separate from the AWS calls so it can be
+    unit tested (see test_feature_query.py).
+    """
+    cols = ", ".join(feature_columns)
+    return f"""
+        WITH ranked AS (
+            SELECT
+                customer_id,
+                {cols},
+                {LABEL_COLUMN},
+                {SLICE_COLUMN},
+                is_deleted,
+                ROW_NUMBER() OVER (
+                    PARTITION BY customer_id
+                    ORDER BY event_time DESC, write_time DESC
+                ) AS rn
+            FROM {table}
+            WHERE event_time BETWEEN {start_epoch} AND {end_epoch}
+        )
+        SELECT
+            customer_id,
+            {cols},
+            {LABEL_COLUMN},
+            {SLICE_COLUMN}
+        FROM ranked
+        WHERE rn = 1
+          AND NOT is_deleted
+        ORDER BY customer_id
+    """
+
+
+def _wait_for_athena(athena, qid: str, timeout_s: int) -> dict:
+    """Poll until the query finishes. Stops the query and raises on timeout."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        status = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]
+        if status["State"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
+            return status
+        if time.monotonic() > deadline:
+            athena.stop_query_execution(QueryExecutionId=qid)
+            raise TimeoutError(f"Athena query {qid} still {status['State']} after {timeout_s}s; "
+                               f"stopped it. Check Athena query history for the cause.")
+        time.sleep(1)
+
+
+def dataset_fingerprint(df: pd.DataFrame) -> str:
+    """SHA-256 of the loaded rows (already ordered by customer_id), so a run records
+    exactly which data it saw even if the Feature Store is re-ingested later."""
+    row_hashes = pd.util.hash_pandas_object(df.reset_index(drop=True), index=False)
+    return hashlib.sha256(row_hashes.values.tobytes()).hexdigest()
+
+
 def load_features_from_feature_store(feature_group_name: str,
                                      start_date: str,
                                      end_date: str,
                                      artifacts_bucket: str,
-                                     feature_columns: list[str]) -> pd.DataFrame:
+                                     feature_columns: list[str],
+                                     timeout_s: int = ATHENA_TIMEOUT_S) -> pd.DataFrame:
     """
     Load features from the SageMaker Feature Store offline store using Athena.
 
@@ -215,10 +291,14 @@ def load_features_from_feature_store(feature_group_name: str,
 
     event_time is Fractional (epoch seconds), so the ISO date bounds are
     converted before comparison; ISO strings fail with TYPE_MISMATCH.
-    The offline store is append-only and soft-deleting, so the query keeps the
-    newest record per customer and drops is_deleted rows. It ORDERs BY
-    customer_id because Athena returns rows in split-completion order, and
-    train_test_split is only deterministic for a given row order.
+    The offline store is append-only and soft-deleting; build_feature_query keeps
+    the newest record per customer and excludes customers whose newest record is a
+    delete marker. It ORDERs BY customer_id because Athena returns rows in
+    split-completion order, and train_test_split is only deterministic for a given
+    row order.
+
+    The returned frame carries df.attrs["athena_query_id"] and
+    df.attrs["data_sha256"] so the run can log which data it used.
     """
     start_epoch = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
     end_epoch = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
@@ -232,45 +312,19 @@ def load_features_from_feature_store(feature_group_name: str,
     catalog = cfg["OfflineStoreConfig"]["DataCatalogConfig"]
     table = f'"{catalog["Database"]}"."{catalog["TableName"]}"'
 
-    cols = ", ".join(feature_columns)
-    query_string = f"""
-        WITH ranked AS (
-            SELECT
-                customer_id,
-                {cols},
-                {LABEL_COLUMN},
-                {SLICE_COLUMN},
-                event_time,
-                ROW_NUMBER() OVER (
-                    PARTITION BY customer_id
-                    ORDER BY event_time DESC, write_time DESC
-                ) AS rn
-            FROM {table}
-            WHERE event_time BETWEEN {start_epoch} AND {end_epoch}
-              AND NOT is_deleted
-        )
-        SELECT
-            customer_id,
-            {cols},
-            {LABEL_COLUMN},
-            {SLICE_COLUMN}
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY customer_id
-    """
+    query_string = build_feature_query(table, feature_columns, start_epoch, end_epoch)
 
     qid = athena.start_query_execution(
         QueryString=query_string,
         ResultConfiguration={
             "OutputLocation": f"s3://{artifacts_bucket}/artifacts/athena-results/"},
     )["QueryExecutionId"]
-    print(f"Athena query {qid} against {table} ...")
+    # The evidence script (collect-lab3-evidence.sh) finds this exact line in
+    # train-final.log and looks the query up in Athena, so keep the format.
+    print(f"Athena QueryExecutionId: {qid}")
+    print(f"  table: {table}")
 
-    while True:
-        status = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]
-        if status["State"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
-            break
-        time.sleep(1)
+    status = _wait_for_athena(athena, qid, timeout_s)
     if status["State"] != "SUCCEEDED":
         raise RuntimeError(f"Athena query {status['State']}: "
                            f"{status.get('StateChangeReason', 'no reason given')}")
@@ -289,10 +343,30 @@ def load_features_from_feature_store(feature_group_name: str,
     header, body = rows[0], rows[1:]
     df = pd.DataFrame(body, columns=header)
 
-    # Athena returns everything as text; restore real types.
+    if df.empty:
+        raise RuntimeError(
+            f"Athena query {qid} returned 0 customers. --training-start-date/--training-end-date "
+            f"bound the Lab 2 INGEST time ({start_date} to {end_date}), not the feature window; "
+            f"a window that ends before your Lab 2 run matches nothing. Also confirm the feature "
+            f"group was populated (re-run the feature-engineering Glue job after a teardown).")
+
+    # Athena returns everything as text; restore real types. errors="coerce" would turn
+    # an unparseable value into NaN silently, so count NaNs before and after: Athena
+    # NULLs are already missing and are reported later; any NEW NaN is a parse failure.
     numeric = feature_columns + [LABEL_COLUMN]
+    nan_before = int(df[numeric].isna().sum().sum())
     df[numeric] = df[numeric].apply(pd.to_numeric, errors="coerce")
+    unparseable = int(df[numeric].isna().sum().sum()) - nan_before
+    if unparseable:
+        bad = [c for c in numeric if df[c].isna().sum() > 0]
+        raise ValueError(f"{unparseable} Athena values could not be parsed as numbers "
+                         f"(columns with missing values: {bad}); refusing to train on silently "
+                         f"coerced data.")
+
+    df.attrs["athena_query_id"] = qid
+    df.attrs["data_sha256"] = dataset_fingerprint(df)
     print(f"  loaded {len(df):,} customers, {df['customer_id'].nunique():,} distinct")
+    print(f"  data sha256: {df.attrs['data_sha256'][:16]}...")
     return df
 
 
@@ -308,6 +382,8 @@ def load_features_local(path: str, feature_columns: list[str]) -> pd.DataFrame:
     if SLICE_COLUMN not in df.columns:
         print(f"WARNING: '{SLICE_COLUMN}' not in local data — Task 1 slice "
               f"evaluation will not be possible with this file")
+    df.attrs["athena_query_id"] = "local-csv"
+    df.attrs["data_sha256"] = dataset_fingerprint(df)
     return df
 
 
@@ -328,7 +404,24 @@ def preprocess_features(df: pd.DataFrame,
     """
     print(f"Preprocessing {len(df):,} samples...")
 
+    n_before = len(df)
     df = df.dropna(subset=[LABEL_COLUMN]).reset_index(drop=True)
+    n_unlabeled = n_before - len(df)
+    if n_unlabeled:
+        print(f"  WARNING: dropped {n_unlabeled:,} rows with no {LABEL_COLUMN}")
+
+    # astype(int) below would silently truncate a label like 0.7 to 0.
+    bad_labels = sorted(set(df[LABEL_COLUMN].unique()) - {0, 1})
+    if bad_labels:
+        raise ValueError(f"{LABEL_COLUMN} must be 0 or 1; found {bad_labels}")
+
+    # Slice evaluation groups by tier, so an unexpected or null tier must not pass quietly.
+    # (A local CSV may lack the column; load_features_local already warns about that.)
+    if SLICE_COLUMN in df.columns:
+        bad_tiers = df[SLICE_COLUMN][~df[SLICE_COLUMN].isin(LOYALTY_TIERS)]
+        if len(bad_tiers):
+            raise ValueError(f"{len(bad_tiers):,} rows have a {SLICE_COLUMN} outside "
+                             f"{list(LOYALTY_TIERS)}: {sorted(bad_tiers.astype(str).unique())}")
 
     n_missing = int(df[feature_columns].isna().sum().sum())
     print(f"  Missing feature cells: {n_missing}"
@@ -773,6 +866,9 @@ def track_run(args, metrics: dict, slices: dict, feature_columns: list[str],
             "include_risk_score": args.include_risk_score,
             "n_features": len(feature_columns),
             "seed": args.seed,
+            "athena_query_id": args.athena_query_id,
+            "data_sha256": args.data_sha256,
+            "n_customers": args.n_customers,
             "best_iteration": args.best_iteration,
             "xgboost_version": xgb.__version__,
             **split_sizes,
@@ -920,7 +1016,17 @@ def main():
             args.training_end_date,
             args.artifacts_bucket,
             feature_columns,
+            timeout_s=args.athena_timeout,
         )
+    # Which data this run saw, logged to MLflow and the evidence JSON so a later
+    # re-ingest cannot be mistaken for the same dataset.
+    args.athena_query_id = df.attrs.get("athena_query_id", "unknown")
+    args.data_sha256 = df.attrs.get("data_sha256", "unknown")
+    args.n_customers = len(df)
+    if args.expected_customers is not None and len(df) != args.expected_customers:
+        raise RuntimeError(f"Loaded {len(df):,} customers but --expected-customers is "
+                           f"{args.expected_customers:,}. The Feature Store contents or the "
+                           f"ingest window changed; check before training.")
 
     # 2. Preprocess
     X, y, df = preprocess_features(df, feature_columns)
@@ -971,6 +1077,8 @@ def main():
         "run_name": args.run_name,
         "xgboost_version": xgb.__version__,
         "include_risk_score": args.include_risk_score,
+        "data": {"athena_query_id": args.athena_query_id, "data_sha256": args.data_sha256,
+                 "n_customers": args.n_customers},
         "feature_columns": feature_columns,
         "hyperparameters": {
             "max_depth": args.max_depth, "eta": args.eta, "num_round": args.num_round,
