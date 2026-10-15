@@ -23,3 +23,6 @@ agent-converse/.cache/
 # Terraform saved plans embed a full state snapshot
 tfplan
 *.tfplan
+
+# Course Discord notes (classmates' names and messages): kept locally, never committed
+docs/lab_3/Discord.md
