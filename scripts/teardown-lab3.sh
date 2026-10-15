@@ -9,6 +9,10 @@
 #
 # Usage: bash scripts/teardown-lab3.sh
 set -uo pipefail
+# Git Bash (MSYS) rewrites arguments that start with "/" into Windows paths, so
+# "--log-group-name-prefix /aws/bedrock-agentcore/..." matched nothing and the harness
+# log group (full conversations, no retention) survived teardown. No effect elsewhere.
+export MSYS_NO_PATHCONV=1
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 mkdir -p docs
 
