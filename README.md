@@ -213,7 +213,9 @@ git tag lab3-submit && git push origin lab3-submit
 
 Run the collector while everything is still up: it exports AWS state that teardown deletes.
 `collect-lab3-evidence.sh` calls `python3`, so on Windows run the `.py` with the venv's Python
-and save its output to `docs/lab3-evidence/collect-output.txt`.
+and save its output to `docs/lab3-evidence/collect-output.txt`. On Git Bash, set `MSYS_NO_PATHCONV=1` for any AWS CLI
+command whose argument starts with `/`: Git Bash rewrites it into a Windows path. `teardown-lab3.sh`
+now does this itself, so it really deletes the harness's conversation log group.
 
 ### Where artifacts land
 

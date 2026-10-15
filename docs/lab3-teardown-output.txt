@@ -3,8 +3,12 @@
       Training jobs running        OK
       Processing jobs              OK
       MLflow TRACKING SERVERS      OK
+      AgentCore harnesses          OK
+      AgentCore gateways           OK
+      AgentCore policy engines     OK
+      AgentCore runtimes           OK
 
-==> Lab 3 teardown complete. No billable inference or training resources remain.
+==> Lab 3 teardown complete. No billable inference, training, or agent resources remain.
     Model Registry entries cost nothing - kept.
     Your MLflow APP is serverless and free - kept on purpose; Labs 4 and 6 log to it.
     Run scripts/teardown-lab2.sh as well if you are done with the data platform.
