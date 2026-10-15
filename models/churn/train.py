@@ -25,11 +25,13 @@ Usage (local testing):
         --run-name xgb-depth6-eta0.1
 
 This lab trains locally (see models/churn/requirements.txt); a SageMaker Training
-Job is optional. Evidence files (evaluation_metrics.json, feature_importance.png)
+Job is optional. Evidence files (evaluation_metrics.json, feature-importance.png,
+confusion-matrix.png, slice-evaluation.csv)
 are written to --output-data-dir, because teardown deletes the S3 copies.
 """
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -811,9 +813,15 @@ def evaluate_slices(y_val: np.ndarray,
             "min_slice_positives": MIN_SLICE_POSITIVES}
 
 
-def plot_feature_importance(model: xgb.Booster, path: str) -> dict:
-    """Save a gain-based feature importance bar chart; return the gains."""
-    gain = model.get_score(importance_type="gain")
+def plot_feature_importance(model: xgb.Booster, path: str,
+                            feature_columns: list[str]) -> dict:
+    """Save a gain-based feature importance bar chart; return the gains.
+
+    get_score omits any feature that was never used in a split. Those are exactly the
+    "decorative" features the design doc asks about, so list them explicitly at 0.
+    """
+    gain = {c: 0.0 for c in feature_columns}
+    gain.update(model.get_score(importance_type="gain"))
     items = sorted(gain.items(), key=lambda kv: kv[1])
     fig, ax = plt.subplots(figsize=(7, 4.5))
     ax.barh([k for k, _ in items], [v for _, v in items], color="#2a6f97")
@@ -825,10 +833,42 @@ def plot_feature_importance(model: xgb.Booster, path: str) -> dict:
     return {k: round(float(v), 4) for k, v in sorted(gain.items(), key=lambda kv: -kv[1])}
 
 
+def plot_confusion_matrix(confusion: dict, cutoff: float, n_flagged: int, path: str) -> None:
+    """Save the confusion matrix at the chosen operating point (top 10% by score)."""
+    cm = np.array([[confusion["tn"], confusion["fp"]],
+                   [confusion["fn"], confusion["tp"]]])
+    fig, ax = plt.subplots(figsize=(4.8, 4.2))
+    ax.imshow(cm, cmap="Blues")
+    for (r, c), v in np.ndenumerate(cm):
+        ax.text(c, r, f"{v:,}", ha="center", va="center",
+                color="white" if v > cm.max() / 2 else "black", fontsize=13)
+    ax.set_xticks([0, 1], ["Not flagged", "Flagged"])
+    ax.set_yticks([0, 1], ["Stayed", "Churned"])
+    ax.set_xlabel("Model decision")
+    ax.set_ylabel("Actual outcome")
+    ax.set_title(f"Confusion matrix at top-10% cutoff\n"
+                 f"(score >= {cutoff:.3f}, {n_flagged:,} customers flagged)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def write_slice_csv(slices: dict, path: str) -> None:
+    """One row per loyalty tier: n, positives, AUC (with CI), recall, too-small flag."""
+    fields = ["tier", "n", "positives", "churn_rate", "auc", "auc_ci_low", "auc_ci_high",
+              "recall_top10_global", "recall_top10_within", "too_small"]
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for tier, r in slices["tiers"].items():
+            w.writerow({"tier": tier, "positives": r["n_pos"],
+                        **{k: r[k] for k in fields if k not in ("tier", "positives")}})
+
+
 # ── Experiment Tracking (MLflow App) ───────────────────────────────────────────
 
 def track_run(args, metrics: dict, slices: dict, feature_columns: list[str],
-              split_sizes: dict) -> None:
+              split_sizes: dict, artifact_paths: list[str]) -> None:
     """
     Log this training run to your SageMaker MLflow App.
 
@@ -858,7 +898,8 @@ def track_run(args, metrics: dict, slices: dict, feature_columns: list[str],
     mlflow.set_tracking_uri(args.mlflow_arn)   # the App ARN, verbatim
     mlflow.set_experiment(args.mlflow_experiment)
 
-    with mlflow.start_run(run_name=args.run_name):
+    with mlflow.start_run(run_name=args.run_name) as run:
+        args.mlflow_run_id = run.info.run_id
         # XGBoost version as a param: the SageMaker container is 1.7 and the
         # reference numbers are 3.2.0, so runs on different versions are not
         # directly comparable and the log must say which is which.
@@ -893,7 +934,9 @@ def track_run(args, metrics: dict, slices: dict, feature_columns: list[str],
         mlflow.log_metrics(flat)
         mlflow.set_tag("feature_set", "with_risk_score" if args.include_risk_score
                        else "without_risk_score")
-        mlflow.log_artifacts(args.output_data_dir)
+        # Only the files this run wrote: --output-data-dir may be a shared evidence folder.
+        for path in artifact_paths:
+            mlflow.log_artifact(path)
 
     print(f"\n✓ Logged run '{args.run_name}' to MLflow experiment "
           f"'{args.mlflow_experiment}'")
@@ -990,6 +1033,7 @@ def register_model(model_path: str, metrics: dict, args) -> str:
             "xgboost_version": xgb.__version__,
             "include_risk_score": str(args.include_risk_score),
             "mlflow_run_name": str(args.run_name),
+            "mlflow_run_id": str(getattr(args, "mlflow_run_id", "none")),
         },
     )
     arn = resp["ModelPackageArn"]
@@ -1075,13 +1119,24 @@ def main():
 
     slices = evaluate_slices(y_test, proba, tier_test,
                              top_fraction_mask(proba, 0.10), metrics["recall_top10"])
-    importance = plot_feature_importance(
-        model, os.path.join(args.output_data_dir, "feature_importance.png"))
+    out = args.output_data_dir
+    importance_png = os.path.join(out, "feature-importance.png")
+    confusion_png = os.path.join(out, "confusion-matrix.png")
+    slices_csv = os.path.join(out, "slice-evaluation.csv")
+    metrics_json = os.path.join(out, "evaluation_metrics.json")
+    importance = plot_feature_importance(model, importance_png, feature_columns)
+    plot_confusion_matrix(metrics["confusion_top10"], metrics["top10_cutoff"],
+                          metrics["n_top10"], confusion_png)
+    write_slice_csv(slices, slices_csv)
 
     # 6. Save locally and write the evidence files. Everything the design doc
     #    cites is written here, because teardown deletes the S3 copies.
     model_path = save_model(model, metrics, feature_columns, args)
+    # The metrics sit at the TOP LEVEL of this file: scripts/collect-lab3-evidence.sh reads
+    # auc_roc, precision_top10, recall_top10, baseline_auc, lift_ci_* and n_val_samples
+    # from here and cross-checks them against MLflow and the registry.
     report = {
+        **metrics,
         "run_name": args.run_name,
         "xgboost_version": xgb.__version__,
         "include_risk_score": args.include_risk_score,
@@ -1095,18 +1150,18 @@ def main():
             "scale_pos_weight": args.resolved_scale_pos_weight,
             "best_iteration": args.best_iteration, "seed": args.seed},
         "split_sizes": split_sizes,
-        "metrics": metrics,
         "gates_passed": not failures,
         "gate_failures": failures,
         "slices": slices,
         "feature_importance_gain": importance,
     }
-    with open(os.path.join(args.output_data_dir, "evaluation_metrics.json"), "w") as f:
+    with open(metrics_json, "w") as f:
         json.dump(report, f, indent=2)
 
     # 7. Track this run in your MLflow App (Task 1, 5 pts). Logged even when a
     #    gate fails: a run that misses is still an experiment worth comparing.
-    track_run(args, metrics, slices, feature_columns, split_sizes)
+    track_run(args, metrics, slices, feature_columns, split_sizes,
+              artifact_paths=[metrics_json, importance_png, confusion_png, slices_csv])
 
     # 8. Register only on request, and only if every gate passed.
     if args.register:

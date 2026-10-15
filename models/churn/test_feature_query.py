@@ -130,6 +130,51 @@ def test_train_model_keeps_only_best_trees():
     assert np.allclose(model.predict(dtest), T.predict_proba(model, X[2500:], cols))
 
 
+def test_main_writes_evidence_files_the_collector_expects():
+    """Run main() end to end on a synthetic CSV (no AWS, no MLflow) and check the evidence
+    files: exact names, and metrics at the TOP LEVEL of evaluation_metrics.json."""
+    import contextlib, csv, io, json, os, sys, tempfile
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    n = 2000
+    df = pd.DataFrame({c: rng.normal(size=n) for c in T.FEATURE_COLUMNS})
+    df["days_since_last_purchase"] = rng.gamma(2.0, 30.0, size=n)
+    logit = 0.02 * df["days_since_last_purchase"] - 2.2 + 0.5 * df["purchase_frequency_90d"]
+    df["churn_label"] = (rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
+    df["loyalty_tier"] = rng.choice(T.LOYALTY_TIERS, size=n, p=[0.4, 0.3, 0.2, 0.1])
+    df["customer_id"] = [f"C{i:05d}" for i in range(n)]
+
+    with tempfile.TemporaryDirectory() as d:
+        data_csv = os.path.join(d, "features.csv")
+        df.to_csv(data_csv, index=False)
+        out = os.path.join(d, "evidence")
+        argv = ["train.py", "--artifacts-bucket", "unused", "--local-data-path", data_csv,
+                "--model-dir", os.path.join(d, "model"), "--output-data-dir", out,
+                "--verbose-eval", "0"]
+        old = sys.argv
+        sys.argv = argv
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                T.main()
+        finally:
+            sys.argv = old
+
+        for name in ("evaluation_metrics.json", "feature-importance.png",
+                     "confusion-matrix.png", "slice-evaluation.csv"):
+            assert os.path.getsize(os.path.join(out, name)) > 0, name
+        m = json.load(open(os.path.join(out, "evaluation_metrics.json")))
+        for k in ("auc_roc", "precision_top10", "recall_top10", "baseline_auc",
+                  "lift_ci_low", "lift_ci_high", "n_val_samples"):
+            assert k in m, f"{k} must be a top-level key"
+        assert "metrics" not in m
+        rows = list(csv.DictReader(open(os.path.join(out, "slice-evaluation.csv"), newline="")))
+        assert {r["tier"] for r in rows} == set(T.LOYALTY_TIERS)
+        assert set(rows[0]) >= {"tier", "n", "positives", "auc", "recall_top10_global", "too_small"}
+        assert set(m["feature_importance_gain"]) == set(T.FEATURE_COLUMNS), "unused features listed at 0"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
