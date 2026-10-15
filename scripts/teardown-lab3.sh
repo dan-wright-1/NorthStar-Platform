@@ -14,19 +14,19 @@ mkdir -p docs
 
 echo "==> Lab 3 teardown  (account $(aws sts get-caller-identity --query Account --output text))"
 
-echo "[1/4] Deleting SageMaker endpoints"
+echo "[1/5] Deleting SageMaker endpoints"
 for e in $(aws sagemaker list-endpoints --query 'Endpoints[*].EndpointName' --output text 2>/dev/null | tr '\t' '\n'); do
   [ -z "$e" ] && continue
   aws sagemaker delete-endpoint --endpoint-name "$e" >/dev/null 2>&1 && echo "      deleted endpoint $e"
 done
 
-echo "[2/4] Deleting endpoint configs"
+echo "[2/5] Deleting endpoint configs"
 for c in $(aws sagemaker list-endpoint-configs --query 'EndpointConfigs[*].EndpointConfigName' --output text 2>/dev/null | tr '\t' '\n'); do
   [ -z "$c" ] && continue
   aws sagemaker delete-endpoint-config --endpoint-config-name "$c" >/dev/null 2>&1 && echo "      deleted config $c"
 done
 
-echo "[3/4] Stopping in-flight training / processing / transform jobs"
+echo "[3/5] Stopping in-flight training / processing / transform jobs"
 for j in $(aws sagemaker list-training-jobs --status-equals InProgress --query 'TrainingJobSummaries[*].TrainingJobName' --output text 2>/dev/null | tr '\t' '\n'); do
   [ -z "$j" ] && continue
   aws sagemaker stop-training-job --training-job-name "$j" >/dev/null 2>&1 && echo "      stopped training job $j"
@@ -40,7 +40,23 @@ for j in $(aws sagemaker list-transform-jobs --status-equals InProgress --query 
   aws sagemaker stop-transform-job --transform-job-name "$j" >/dev/null 2>&1 && echo "      stopped transform job $j"
 done
 
-echo "[4/4] Verifying"
+echo "[4/5] Track C: destroying the AgentCore stack (if you built one)"
+AGENT_TF="infrastructure/environments/agent"
+if [ -d "$AGENT_TF/.terraform" ]; then
+  # The harness alone takes about 5-6 minutes to delete. Let it finish.
+  terraform -chdir="$AGENT_TF" destroy -auto-approve -no-color 2>&1 | grep -E "Destroy complete|Error|rror:" | sed 's/^/      /'
+else
+  echo "      no initialized $AGENT_TF - skipping (Track B, or never applied)"
+fi
+# AWS creates the harness runtime log group itself, so terraform destroy does
+# not remove it. It has no retention limit and holds full conversations,
+# including customer messages. Delete it.
+for g in $(aws logs describe-log-groups --log-group-name-prefix /aws/bedrock-agentcore/runtimes/harness_ --query 'logGroups[].logGroupName' --output text 2>/dev/null | tr '\t' '\n'); do
+  [ -z "$g" ] && continue
+  aws logs delete-log-group --log-group-name "$g" >/dev/null 2>&1 && echo "      deleted log group $g"
+done
+
+echo "[5/5] Verifying"
 {
   fail=0
   # A failed AWS call is a FAILED check, never "OK". This used to be
@@ -67,9 +83,14 @@ echo "[4/4] Verifying"
   # catches it. The serverless MLflow APP is free and deliberately NOT checked:
   # students keep it for Labs 4 and 6.
   check "MLflow TRACKING SERVERS" "aws sagemaker list-mlflow-tracking-servers --query 'length(TrackingServerSummaries)' --output text"
+  # Track C. These need AWS CLI >= 2.36; an older CLI shows CHECK FAILED here.
+  check "AgentCore harnesses"     "aws bedrock-agentcore-control list-harnesses --query 'length(harnesses)' --output text"
+  check "AgentCore gateways"      "aws bedrock-agentcore-control list-gateways --query 'length(items)' --output text"
+  check "AgentCore policy engines" "aws bedrock-agentcore-control list-policy-engines --query 'length(policyEngines)' --output text"
+  check "AgentCore runtimes"      "aws bedrock-agentcore-control list-agent-runtimes --query 'length(agentRuntimes)' --output text"
   echo ""
   if [ "$fail" = "0" ]; then
-    echo "==> Lab 3 teardown complete. No billable inference or training resources remain."
+    echo "==> Lab 3 teardown complete. No billable inference, training, or agent resources remain."
     echo "    Model Registry entries cost nothing - kept."
     echo "    Your MLflow APP is serverless and free - kept on purpose; Labs 4 and 6 log to it."
     echo "    Run scripts/teardown-lab2.sh as well if you are done with the data platform."
