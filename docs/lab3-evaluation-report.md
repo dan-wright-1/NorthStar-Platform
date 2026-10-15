@@ -1,8 +1,10 @@
 # Lab 3 Task 1: Churn Model Evaluation Report
 
-All figures come from one graded run, and the same numbers appear in four places: this report,
+The headline results, confusion matrix, feature importance and slice table all come from one
+graded run, and its numbers appear in four places: this report,
 [`lab3-evidence/evaluation_metrics.json`](lab3-evidence/evaluation_metrics.json), MLflow run
-`xgb-d4-eta0.1-final` and the metadata of Model Registry version 2.
+`xgb-d4-eta0.1-final` and the metadata of Model Registry version 2. Comparison figures from the
+other MLflow runs and the course reference are labelled where they appear.
 
 | | |
 |---|---|
@@ -147,6 +149,8 @@ console log captured. It reproduced the original run to four decimal places. Two
 d6-risk) had best iterations of only 6 and 4, so training halted around rounds 26 and 24. That
 shows that 20 rounds of patience on about 1,050 validation customers is a noisy stopping rule.
 It did not affect the selected run, whose best iteration was 51 (training halted at round 71 and
-the saved model keeps the first 52 trees). Registry v1 holds the original run of the same
-configuration with identical metrics. v2 is the graded run, because its console log and Athena
-query are part of the evidence.
+the saved model keeps the first 52 trees). Registry v1 holds an earlier execution of the same
+configuration with identical metrics. It was registered before run IDs were written to the
+metadata, and its MLflow run is not among the six exported. v2 is the graded run, linked to MLflow
+run `5de1d844…` through `mlflow_run_id`. The evidence collector's registry check names v1 only
+because it reports the oldest version whose metrics match, and both versions match.

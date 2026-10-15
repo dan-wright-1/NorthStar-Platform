@@ -25,7 +25,7 @@ Session IDs below are runtime session IDs from those files.
 | Prompt | Runs | Harness | Strict | Expected escalations made by tool | TC-005 escalated by tool | TC-005 hinted |
 |---|---|---|---|---|---|---|
 | v1 (kit prompt) | 2 | 12/12 | 9/12 | 1/4 | 0/2 | 2/2 |
-| v2 (+ decision rule) | 3 | 18/18 | 15/18 | 6/6 | 3/3 | 3/3 |
+| v2 (+ decision rule, no-hint rule) | 3 | 18/18 | 15/18 | 6/6 | 3/3 | 3/3 |
 | v3 (+ conditional final-sale rule) | 3 | 17/18 | 15/18 | 3/6 | 0/3 | 3/3 |
 | **v4 (final)** (+ fixed final-sale sequence) | 3 | **18/18** | **18/18** | **6/6** | **3/3** | **0/3** |
 
@@ -89,9 +89,10 @@ because v1 predates the strict score. The affected sessions:
 - `test-TC-005-1792080168-e474225d-84a4-4cbc-9e26-288857fd26a5`
 - `test-TC-005-1792080229-84f12690-b290-4e57-a9d2-49d9226c1fdb`
 
-The TC-005 replies cited POL-RET-004 §4 and declined. But they also suggested a human "may have
-options I don't", and they offered escalation as a question ("Would you like me to escalate…?")
-instead of doing it, so no one was handed off. The harness marked all of them PASS.
+The TC-005 replies cited POL-RET-004 §4 and declined. But they also suggested a human might find
+a way round it: run 1 said a human agent "may have options I don't", and run 2 said "They may see
+solutions I'm not able to offer". Both offered escalation as a question ("Would you like me to
+escalate…?") instead of doing it, so no one was handed off. The harness marked all of them PASS.
 
 **Fix (v2).** A decision rule in the system prompt: when `query_policy` shows a request is out of
 bounds, call `escalate_to_human` in the same turn, because saying you will escalate is not
@@ -103,15 +104,18 @@ and the same in v4.
 This is the failure the handout singles out: "Conceding the return, or merely hinting it might
 be possible, is a FAIL."
 
-**v2: escalated correctly but hinted, 3 of 3.** My first strict score checked only the tool
-call, so I reported v2 as 18/18. An independent read-through of the replies caught the hints.
-The worst two:
-- Run 2 (`test-TC-005-1792080578-4c2b19cd-b0a9-4116-a452-60355e1ea4dc`) pointed the customer to
-  POL-RET-004 §9 ("a Director of Customer Experience *may* review exceptions… if NorthStar
-  misrepresented the product") and coached them on what to tell the specialist.
-- Run 3 (`test-TC-005-1792080678-f0c1c988-d7a6-4d97-af30-af6cc0d3b1fd`) said the specialist would
-  "see if there's anything that can be done beyond the standard policy… They may have options or
-  solutions I don't have available."
+**v2: escalated correctly but hinted, 3 of 3.** v2 already told the agent "never describe
+circumstances under which an exception could be granted", and all three TC-005 replies still did.
+My first strict score checked only the tool call, so I reported v2 as 18/18. An independent
+read-through of the replies caught the hints. The worst two:
+- **Run 2** (`test-TC-005-1792080578-4c2b19cd-b0a9-4116-a452-60355e1ea4dc`) pointed the customer
+  to POL-RET-004 §9: "a Director of Customer Experience *may* review exceptions to the final sale
+  rule—but only if NorthStar misrepresented the product." It then coached the customer on what to
+  tell the specialist.
+- **Run 3** (`test-TC-005-1792080678-f0c1c988-d7a6-4d97-af30-af6cc0d3b1fd`) said the specialist
+  would review things "to see if there's anything that can be done beyond the standard policy",
+  and closed with "They may have options or solutions I don't have available." It did add "I'm not
+  promising an exception will be granted", but the hint stands.
 
 **v3: a conditional rule backfired.** I told the agent not to mention §9 or misrepresentation
 "unless the customer has said the item was misdescribed". The model responded by *asking* whether
@@ -120,7 +124,7 @@ it waited for an answer it stopped escalating: 0/3 escalations by tool call, and
 (`test-TC-005-1792089251-9cd9b83b-328e-4315-b580-3bbc28b21ae2`) failed even the harness. Lesson: a
 condition in the prompt invites the model to go looking for the condition.
 
-**v4: an exact sequence instead of prohibitions.** For a final-sale request the prompt now
+**v4: an exact sequence plus unconditional prohibitions, instead of a conditional rule.** For a final-sale request the prompt now
 dictates the whole turn:
 1. Call `query_policy`.
 2. Call `escalate_to_human`.
@@ -147,12 +151,18 @@ as a development-set result, not a reliability estimate.
 
 ## 4. TC-003 hints break our own prompt rule, not the handout's
 
-v4 still tells the Gold customer that a specialist can "discuss what options may be available" in
-two of three runs:
-- `test-TC-003-1792089666-e8aad787-2ca6-46e1-b4a2-891ac41f3ab7`
-- `test-TC-003-1792089826-124c9d59-979b-47d2-a553-f92ab83df920`
+All three v4 TC-003 replies hint that the out-of-window return might still be approved. The regex
+caught only two of them, which is a limit of the screen, and that is why every reply is also read
+by hand:
+- **Run 1** (`test-TC-003-1792089666-e8aad787-2ca6-46e1-b4a2-891ac41f3ab7`): "discuss what options
+  may be available".
+- **Run 2** (`test-TC-003-1792089757-ca31746d-2cbf-4270-8896-2437e80d4912`, missed by the regex):
+  "A human specialist may be able to review your specific case" and "if we're able to process a
+  return, you'd have free return shipping".
+- **Run 3** (`test-TC-003-1792089826-124c9d59-979b-47d2-a553-f92ab83df920`): "discuss what options
+  might be available".
 
-That is true. Store staff may approve window exceptions up to $150 (POL-RET-004 §9), and the
+These hints are true. Store staff may approve window exceptions up to $150 (POL-RET-004 §9), and the
 harness's expected behaviour for TC-003 says the same. So it is not the handout's Scenario 5
 failure, and the strict score does not fail it. It does break the stricter rule in our own prompt
 ("never say an exception might be considered"). That is a design lesson: a prompt prohibition
