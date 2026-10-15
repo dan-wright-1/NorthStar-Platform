@@ -16,3 +16,10 @@ __pycache__/
 .venv/
 .build/
 agent-converse/.cache/
+
+# Claude Code personal settings (local permission rules)
+.claude/settings.local.json
+
+# Terraform saved plans embed a full state snapshot
+tfplan
+*.tfplan

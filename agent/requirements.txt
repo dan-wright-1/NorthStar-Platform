@@ -1,0 +1,9 @@
+# Client side of the Lab 3 Track C AgentCore agent (the Lambda itself has no third-party deps).
+boto3>=1.43.57        # first version with bedrock-agentcore invoke_harness
+botocore[crt]         # lets boto3 use `aws login` session credentials
+pandas                # demo notebook tables
+certifi               # policy_tests.py TLS roots on python.org builds
+# demo notebook execution
+nbformat
+nbconvert
+ipykernel

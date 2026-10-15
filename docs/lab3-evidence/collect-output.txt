@@ -1,0 +1,41 @@
+==> Lab 3 evidence  (track C, us-east-1)
+[1/5] Identity
+  OK    account 767397742230  --  arn:aws:iam::767397742230:root
+[2/5] Evidence files
+  OK    docs/lab3-evidence/train-final.log
+  OK    docs/lab3-evidence/evaluation_metrics.json
+  OK    docs/lab3-evidence/slice-evaluation.csv
+  OK    docs/lab3-evidence/confusion-matrix.png
+  OK    docs/lab3-evidence/feature-importance.png
+  OK    docs/lab3-evaluation-report.md
+  OK    docs/lab3-model-design.md
+  OK    docs/bedrock-access-verification.txt
+  OK    notebooks/lab3-demo.ipynb
+  OK    docs/lab3-evidence/agent_eval.csv
+  OK    docs/lab3-evidence/agent-traces.jsonl
+  OK    docs/lab3-evidence/agent-cost.csv
+  OK    docs/lab3-evidence/track-c-failures.md
+  OK    docs/lab3-evidence/policy-tests.json
+[3/5] Content checks
+  OK    gate precision_top10 >= 0.50
+  OK    gate recall_top10 >= 0.25
+  OK    gate lift 95% CI excludes zero
+  OK    slice-evaluation.csv  --  4 tiers
+  OK    demo notebook  --  7 code cells, one clean run, 7 with output
+  OK    agent-traces.jsonl  --  20 tool calls
+  OK    policy-tests.json  --  2 over-cap credits denied at the gateway
+  OK    agent_eval.csv  --  18 test cases (harness has 5+)
+[4/5] AWS exports: Athena, MLflow, Model Registry, AgentCore
+  OK    Athena query  --  8ff30761-68e5-4168-aee5-7fd4e6d05d90 SUCCEEDED, 682222 bytes scanned
+  OK    MLflow App reuses Lab 1 infrastructure  --  northstar-dev-MLEngineer, s3://northstar-dev-data-767397742230/artifacts/mlflow/
+  OK    MLflow runs  --  6 runs with params and metrics in 'northstar-churn'
+  OK    MLflow runs vary  --  athena_query_id, n_features, num_round, max_depth, eta, data_sha256, include_risk_score, best_iteration
+  OK    consistency: MLflow  --  a tracked run matches auc_roc=0.7831
+  OK    Model Registry  --  2 PendingManualApproval version(s); latest v2
+  OK    consistency: registry  --  v1 metadata matches evaluation_metrics.json
+  OK    harness northstar_agent  --  idle timeout 60s, 1 tool source(s)
+  OK    gateway northstar-tools-gw  --  policy engine mode ENFORCE
+  OK    policy engine northstar_agent_policies  --  2 policies
+[5/5] Summary
+  33 OK, 0 WARN, 0 FAIL
+  Evidence complete. Next: bash scripts/teardown-lab3.sh, then commit and tag lab3-submit.

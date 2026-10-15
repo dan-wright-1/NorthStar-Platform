@@ -1,42 +1,42 @@
-# Terraform Module Template — Lab 1 Part B
+# Infrastructure
 
-Skeleton for Task B1. **It is empty on purpose**: every file declares its
-variables and outputs, and `main.tf` lists the resources you owe, but no
-resources are written for you.
-
-Verify it starts clean before you add anything:
-
-```bash
-cd environments/dev
-terraform init
-terraform fmt -check -recursive ../..   # no output = pass
-terraform validate                      # exits 0
-```
-
-Both must still pass when you submit — that is 5 of the 15 points in B1.
+Terraform for the NorthStar platform. Started from the Lab 1 Part B module template and
+extended each lab; the root [README](../README.md) describes what each lab added.
 
 ## Layout
 
 ```
-modules/vpc/        aws_vpc, aws_subnet (public only), aws_internet_gateway,
-                    aws_route_table, aws_route_table_association, aws_security_group
-modules/storage/    aws_s3_bucket + public_access_block, versioning,
-                    server_side_encryption_configuration, aws_s3_object x4
-modules/iam/        one aws_iam_role (MLEngineer trust), one aws_iam_policy,
-                    one aws_iam_role_policy_attachment
-modules/sagemaker/  aws_sagemaker_domain, aws_sagemaker_user_profile
+modules/
+  vpc/            VPC, public subnet + internet gateway, private subnet + NAT gateway (Lab 2),
+                  route tables, shared security group (self-referencing ingress for Glue)
+  storage/        data bucket: public access block, versioning, encryption, lifecycle rules,
+                  raw/ processed/ features/ artifacts/ prefixes
+  iam/            MLEngineer, DataEngineer and ModelMonitor roles and their policies
+  sagemaker/      SageMaker domain (VpcOnly, private subnet) and the MLEngineer user profile
+  glue/           catalog database, network connection, raw crawler, transform and
+                  feature-engineer jobs (scripts uploaded from ../glue-scripts/)
+  feature_store/  customer Feature Group (online + offline store)
+environments/
+  dev/            the real deployment of the modules (aws provider ~> 5.0; S3 state + DynamoDB lock)
+  local/          the same modules against LocalStack (no SageMaker, NAT or lifecycle rules)
+  agent/          Lab 3 Track C AgentCore stack: tools Lambda, gateway + target, Cedar policy
+                  engine and policies, harness. Separate root because AgentCore needs the
+                  aws provider 6.x (pinned 6.67.0); same state bucket and lock table,
+                  its own state key (agent/terraform.tfstate)
 ```
 
-Each module contains **only** its designated resources — that is graded.
+## Rules the modules keep
 
-## The rule that catches people
-
-**No hardcoded names.** The rubric runs:
+- **No hardcoded names in modules.** `grep -rn '"northstar-dev"' infrastructure/modules/` returns
+  nothing; names are built from `var.project` and `var.environment`.
+- Every variable has a `description`.
+- Each module contains only its own resources.
 
 ```bash
-grep -rn '"northstar-dev"' infrastructure/modules/
+terraform -chdir=infrastructure/environments/dev init
+terraform fmt -check -recursive infrastructure      # no output = pass
+terraform -chdir=infrastructure/environments/dev validate
 ```
 
-and expects nothing. Build names from `var.project` and `var.environment`
-(`"${var.project}-${var.environment}-data"`), and give every variable a
-`description` — that is also graded.
+Always `plan -out=tfplan` and apply the saved plan. Plan files and `*.tfstate` are gitignored
+(both can contain state).
