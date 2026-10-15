@@ -222,7 +222,7 @@ and save its output to `docs/lab3-evidence/collect-output.txt`.
 | Graded training run: console log, metrics, plots, slice table | `docs/lab3-evidence/` (`train-final.log`, `evaluation_metrics.json`, `confusion-matrix.png`, `feature-importance.png`, `slice-evaluation.csv`) |
 | Account identity, Athena query, MLflow App and runs, Model Registry, AgentCore config (exported) | `docs/lab3-evidence/` (`account.json`, `athena-query.json`, `mlflow-app.json`, `mlflow-runs.csv`, `model-registry.json`, `agentcore-config.json`, `collect-output.txt`) |
 | Model package | Model Registry group `northstar-churn-models` (`PendingManualApproval`); artifact under `s3://<bucket>/artifacts/models/churn/` (deleted by teardown) |
-| Agent evaluation | `docs/lab3-evidence/` (`agent_eval.csv`, `agent-traces.jsonl`, `agent-cost.csv`, `policy-tests.json`, `track-c-failures.md`; earlier prompt versions' runs in `history/v1_*` and `history/v2_*`) |
+| Agent evaluation | `docs/lab3-evidence/` (`agent_eval.csv`, `agent-traces.jsonl`, `agent-cost.csv`, `policy-tests.json`, `track-c-failures.md`; runs of the earlier prompt versions in `history/v1_*`, `v2_*`, `v3_*`, every version's `*_system_prompt.md` (v4 is final), and `history/rescored-summary.csv`) |
 | Reports | `docs/lab3-evaluation-report.md` (Task 1), `docs/lab3-model-design.md` (Task 3) |
 | Earlier experiment grid and model comparison | `docs/lab_3/results/` |
 | Teardown evidence | `docs/lab3-teardown-output.txt` |

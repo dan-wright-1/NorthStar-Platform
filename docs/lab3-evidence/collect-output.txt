@@ -29,7 +29,7 @@
   OK    Athena query  --  8ff30761-68e5-4168-aee5-7fd4e6d05d90 SUCCEEDED, 682222 bytes scanned
   OK    MLflow App reuses Lab 1 infrastructure  --  northstar-dev-MLEngineer, s3://northstar-dev-data-767397742230/artifacts/mlflow/
   OK    MLflow runs  --  6 runs with params and metrics in 'northstar-churn'
-  OK    MLflow runs vary  --  athena_query_id, n_features, num_round, max_depth, eta, data_sha256, include_risk_score, best_iteration
+  OK    MLflow runs vary  --  num_round, athena_query_id, include_risk_score, n_features, max_depth, best_iteration, eta, data_sha256
   OK    consistency: MLflow  --  a tracked run matches auc_roc=0.7831
   OK    Model Registry  --  2 PendingManualApproval version(s); latest v2
   OK    consistency: registry  --  v1 metadata matches evaluation_metrics.json
