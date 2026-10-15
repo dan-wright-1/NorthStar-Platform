@@ -1,0 +1,94 @@
+{
+  "gateway_url": "https://northstar-tools-gw-dberup6dsb.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+  "results": [
+    {
+      "case": "read-only tool",
+      "tool": "lookup_order",
+      "arguments": {
+        "order_id": "ORD-1234567"
+      },
+      "expected": "ALLOW",
+      "decision": "ALLOW",
+      "detail": "{\"order_id\":\"ORD-1234567\",\"customer_id\":\"CUST-001\",\"status\":\"Shipped\",\"order_date\":\"2026-10-10\",\"estimated_delivery\":\"2026-10-17\",\"tracking_number\":\"1Z999AA10123456784\",\"carrier\":\"UPS\",\"items\":[{\"sku\":\"SKU-0041\",\"name\":\"NorthStar Footwear Item 41\",\"qty\":1,\"price\":129.99},{\"sku\":\"SKU-0012\",\"name\":\"No",
+      "as_expected": true
+    },
+    {
+      "case": "credit under cap",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 30,
+        "reason": "policy test"
+      },
+      "expected": "ALLOW",
+      "decision": "ALLOW",
+      "detail": "{\"success\":true,\"approval_required\":false,\"customer_id\":\"CUST-001\",\"amount_credited\":30.0,\"points_added\":3000,\"new_balance\":5847,\"reason_recorded\":\"policy test\",\"message\":\"A loyalty credit of $30.00 (3000 points) has been applied to Jordan Martinez account. New balance: 5847 points.\"}",
+      "as_expected": true
+    },
+    {
+      "case": "credit at cap",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 50,
+        "reason": "policy test"
+      },
+      "expected": "ALLOW",
+      "decision": "ALLOW",
+      "detail": "{\"success\":true,\"approval_required\":false,\"customer_id\":\"CUST-001\",\"amount_credited\":50.0,\"points_added\":5000,\"new_balance\":10847,\"reason_recorded\":\"policy test\",\"message\":\"A loyalty credit of $50.00 (5000 points) has been applied to Jordan Martinez account. New balance: 10847 points.\"}",
+      "as_expected": true
+    },
+    {
+      "case": "credit just over cap",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 51,
+        "reason": "policy test"
+      },
+      "expected": "DENY",
+      "decision": "DENY",
+      "detail": "Tool Execution Denied: Tool call not allowed due to policy enforcement [Policy evaluation denied due to cap_loyalty_credit-68ce0ltnbg]",
+      "as_expected": true
+    },
+    {
+      "case": "credit well over cap",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 75,
+        "reason": "policy test"
+      },
+      "expected": "DENY",
+      "decision": "DENY",
+      "detail": "Tool Execution Denied: Tool call not allowed due to policy enforcement [Policy evaluation denied due to cap_loyalty_credit-68ce0ltnbg]",
+      "as_expected": true
+    },
+    {
+      "case": "split credit, part 1 of 2",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 40,
+        "reason": "split"
+      },
+      "expected": "ALLOW",
+      "decision": "ALLOW",
+      "detail": "{\"success\":true,\"approval_required\":false,\"customer_id\":\"CUST-001\",\"amount_credited\":40.0,\"points_added\":4000,\"new_balance\":14847,\"reason_recorded\":\"split\",\"message\":\"A loyalty credit of $40.00 (4000 points) has been applied to Jordan Martinez account. New balance: 14847 points.\"}",
+      "as_expected": true
+    },
+    {
+      "case": "split credit, part 2 of 2",
+      "tool": "apply_loyalty_credit",
+      "arguments": {
+        "customer_id": "CUST-001",
+        "amount": 40,
+        "reason": "split"
+      },
+      "expected": "ALLOW",
+      "decision": "ALLOW",
+      "detail": "{\"success\":true,\"approval_required\":false,\"customer_id\":\"CUST-001\",\"amount_credited\":40.0,\"points_added\":4000,\"new_balance\":18847,\"reason_recorded\":\"split\",\"message\":\"A loyalty credit of $40.00 (4000 points) has been applied to Jordan Martinez account. New balance: 18847 points.\"}",
+      "as_expected": true
+    }
+  ]
+}

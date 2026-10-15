@@ -15,4 +15,4 @@ __pycache__/
 # Python virtualenv (Lab 3 training)
 .venv/
 .build/
-agent/.cache/
+agent-converse/.cache/
