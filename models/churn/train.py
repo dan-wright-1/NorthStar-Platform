@@ -564,6 +564,8 @@ def train_recency_baseline(X_train: np.ndarray,
     dtr = xgb.DMatrix(X_train[:, [i]], label=y_train, feature_names=[BASELINE_FEATURE])
     dva = xgb.DMatrix(X_val[:, [i]], feature_names=[BASELINE_FEATURE])
     spw = float((y_train == 0).sum() / max((y_train == 1).sum(), 1))
+    # Fixed on purpose: this is the DEFINITION of the comparison baseline, not a model being
+    # tuned. Exposing these as arguments would let a run move the goalposts it is scored against.
     params = {
         "objective": "binary:logistic", "eval_metric": "auc",
         "max_depth": 4, "eta": 0.1, "subsample": 0.9,

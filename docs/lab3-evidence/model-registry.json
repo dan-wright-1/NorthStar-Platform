@@ -1,0 +1,46 @@
+{
+  "ModelPackageGroupName": "northstar-churn-models",
+  "Versions": [
+    {
+      "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/2",
+      "ModelPackageVersion": 2,
+      "ModelApprovalStatus": "PendingManualApproval",
+      "CreationTime": "2026-10-15 11:42:32.929000-06:00",
+      "ModelPackageDescription": "Churn model 20261015T174224Z: AUC 0.7831, P@10% 0.74, R@10% 0.3364, lift over recency baseline 0.059 [0.0397, 0.0795] (XGBoost 3.4.1, risk score excluded)",
+      "CustomerMetadataProperties": {
+        "auc_roc": "0.7831",
+        "auc_vs_baseline": "0.059",
+        "baseline_auc": "0.7242",
+        "include_risk_score": "False",
+        "lift_ci_high": "0.0795",
+        "lift_ci_low": "0.0397",
+        "mlflow_run_id": "5de1d844a80440cca81181c49318a04c",
+        "mlflow_run_name": "xgb-d4-eta0.1-final",
+        "n_val_samples": "3000",
+        "precision_top10": "0.74",
+        "recall_top10": "0.3364",
+        "xgboost_version": "3.4.1"
+      }
+    },
+    {
+      "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/1",
+      "ModelPackageVersion": 1,
+      "ModelApprovalStatus": "PendingManualApproval",
+      "CreationTime": "2026-10-12 21:41:00.542000-06:00",
+      "ModelPackageDescription": "Churn model 20261013T034058Z: AUC 0.7831, P@10% 0.74, R@10% 0.3364, lift over recency baseline 0.059 [0.0397, 0.0795] (XGBoost 3.4.1, risk score excluded)",
+      "CustomerMetadataProperties": {
+        "auc_roc": "0.7831",
+        "auc_vs_baseline": "0.059",
+        "baseline_auc": "0.7242",
+        "include_risk_score": "False",
+        "lift_ci_high": "0.0795",
+        "lift_ci_low": "0.0397",
+        "mlflow_run_name": "xgb-d4-eta0.1",
+        "n_val_samples": "3000",
+        "precision_top10": "0.74",
+        "recall_top10": "0.3364",
+        "xgboost_version": "3.4.1"
+      }
+    }
+  ]
+}

@@ -30,3 +30,5 @@ run xgb-d4-eta0.1            --max-depth 4 --eta 0.1
 run xgb-d3-eta0.05           --max-depth 3 --eta 0.05 --num-round 400
 # Leakage check: same config as the reference, risk score included.
 run xgb-d6-eta0.1-risk       --max-depth 6 --eta 0.1 --include-risk-score
+# Same check at the selected configuration (report compares this pair).
+run xgb-d4-eta0.1-risk       --max-depth 4 --eta 0.1 --include-risk-score

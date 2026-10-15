@@ -10,3 +10,5 @@ xgboost
 matplotlib
 mlflow
 sagemaker-mlflow
+# CRT extra: lets boto3 use `aws login` session credentials directly
+botocore[crt]

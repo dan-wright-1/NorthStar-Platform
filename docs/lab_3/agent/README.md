@@ -1,7 +1,9 @@
-# Track C: customer service agent results
+# Superseded: client-side Converse agent (first Track C build)
 
-Code is in `agent/`. Demo notebook: `agent/demo.ipynb` (executed, outputs saved). Re-run with
-`python agent/run_eval.py` after `aws login` and `eval "$(aws configure export-credentials --format env)"`.
+> The graded Track C agent is the AgentCore build in `agent/` and `infrastructure/environments/agent/`, with evidence in `docs/lab3-evidence/`. The handout was updated mid-lab to require AgentCore. This folder documents the earlier Converse-loop agent, now in `agent-converse/`, kept for reference.
+
+Code is in `agent-converse/`. Demo notebook: `agent-converse/demo.ipynb` (executed, outputs saved). Re-run with
+`python agent-converse/run_eval.py` after `aws login` and `eval "$(aws configure export-credentials --format env)"`.
 
 ## Design
 
@@ -32,7 +34,7 @@ Caveats: one run per scenario; a model at temperature 0 is still not fully deter
 a sample, not a guarantee. The harness checks tool calls and an escalation signal, not wording, so I read
 the replies too (below). The harness's `LocalAgentEvaluator.run()` raises `KeyError: 'tool_calls_made'`
 because `evaluate_scenario()` returns different key names than `run()`/`_print_summary()` read;
-`agent/run_eval.py` adds the missing keys in a subclass and leaves the harness unmodified.
+`agent-converse/run_eval.py` adds the missing keys in a subclass and leaves the harness unmodified.
 
 Excerpts (full traces in `agent_traces.json`):
 

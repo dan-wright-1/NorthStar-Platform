@@ -1,0 +1,61 @@
+============================================================
+NorthStar Churn Prediction — Training Script
+run: xgb-d4-eta0.1-risk   xgboost 3.4.1   risk score IN
+============================================================
+Athena QueryExecutionId: 69f8e2ea-d9e9-4f99-8c76-d03c15a93b13
+  table: "sagemaker_featurestore"."northstar_dev_customer_features_1792085173"
+  loaded 9,999 customers, 9,999 distinct
+  data sha256: aa04e2469a2ef302...
+Preprocessing 9,999 samples...
+  Missing feature cells: 0
+  Positive class rate: 22.0%
+  Feature matrix shape: (9999, 12)
+
+Train: 5,949 | Early-stop: 1,050 | Test: 3,000
+
+Training XGBoost with params: {
+  "objective": "binary:logistic",
+  "eval_metric": [
+    "logloss",
+    "auc"
+  ],
+  "max_depth": 4,
+  "eta": 0.1,
+  "min_child_weight": 5,
+  "subsample": 0.8,
+  "colsample_bytree": 0.8,
+  "scale_pos_weight": 3.544690603514133,
+  "seed": 42,
+  "verbosity": 1
+}
+[0]	train-logloss:0.66791	train-auc:0.77558	stop-logloss:0.66982	stop-auc:0.75940
+[25]	train-logloss:0.51505	train-auc:0.81658	stop-logloss:0.54446	stop-auc:0.77490
+[50]	train-logloss:0.48555	train-auc:0.84423	stop-logloss:0.53017	stop-auc:0.78421
+[72]	train-logloss:0.46665	train-auc:0.86232	stop-logloss:0.52520	stop-auc:0.78123
+  best iteration: 52
+
+── Evaluation Results ──────────────────────────────
+  precision_top10          : 0.7167  (threshold: 0.5000)  ✓ PASS
+  recall_top10             : 0.3258  (threshold: 0.2500)  ✓ PASS
+  auc_roc (not gated)      : 0.7858
+  baseline_auc             : 0.7242
+  auc_lift 95% CI          : [0.0421, 0.0811]  (must exclude 0)  ✓ PASS
+  All gates passed ✓
+
+── Slice evaluation by loyalty tier ────────────────
+  aggregate recall@10% = 0.3258 (flag if below 0.2258)
+  tier           n  n_pos     AUC        AUC 95% CI  rec@glob rec@within  notes
+  Bronze      1071    361  0.7557    [0.724, 0.787]    0.4321     0.2881  
+  Gold         483     52  0.7576    [0.684, 0.822]    0.1154     0.3077  FLAG(global)
+  Platinum     307     21  0.8803    [0.815, 0.938]    0.0952     0.4286  TOO SMALL (<30 positives); FLAG(global)
+  Silver      1139    226  0.7218    [0.682, 0.760]    0.2257     0.2699  FLAG(global); weakest AUC
+
+✓ Model saved to .build/model-risk\model.json
+🏃 View run xgb-d4-eta0.1-risk at: https://mlflow.sagemaker.us-east-1.app.aws/#/experiments/1/runs/06630ff4c77c4f2198e7ed03a97a180d
+🧪 View experiment at: https://mlflow.sagemaker.us-east-1.app.aws/#/experiments/1
+
+✓ Logged run 'xgb-d4-eta0.1-risk' to MLflow experiment 'northstar-churn'
+
+============================================================
+Training complete. AUC-ROC: 0.7858  gates PASSED
+============================================================
