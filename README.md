@@ -24,7 +24,7 @@ scripts/
   verify-lab2.sh       Lab 2 rubric checks, incl. data-quality checks on S3 output
   run-lab3-experiments.sh  Lab 3 churn experiment grid (5 MLflow runs)
   collect-lab3-evidence.sh (+ collect_lab3_evidence.py)  exports Athena/MLflow/registry/AgentCore
-                       evidence into docs/lab3-evidence/ and cross-checks it
+                       evidence into docs/lab_3/lab3-evidence/ and cross-checks it
   teardown-lab3.sh     Lab 3 teardown: endpoints, jobs, tracking servers, the AgentCore stack
   teardown-lab2.sh     full Lab 2 teardown, incl. resources Terraform can't see
   check-secrets.sh     scans all git history for committed credentials
@@ -40,14 +40,13 @@ agent/                 Lab 3 Track C (graded): AgentCore tools + Lambda handler,
 agent-converse/        earlier client-side ReAct loop over Bedrock Converse (superseded, kept for reference)
 notebooks/lab3-demo.ipynb  Track C demo, committed with outputs from one clean run
 northstar-policy-docs/ policy corpus the agent retrieves from (bundled into the tools Lambda)
-docs/                  Lab 2 graded outputs (lab2-*), data contract, lineage diagram
+docs/                  the lab in progress (and its pre-labs); a lab's files move into
+                       lab_N/ once it is tagged labN-submit (the tag keeps the graded paths)
   lab_1/               Lab 1 diagrams, screenshots, ADR, cost estimate, run outputs
-  lab_2/               Lab 2 handout and diagram source
-  lab_3/               Lab 3 handout; results/ (earlier experiment grid), agent/ (Converse-agent runs)
-  lab3-evidence/       Lab 3 graded evidence (see "Where artifacts land")
-  lab3-evaluation-report.md  Task 1 evaluation report
-  lab3-model-design.md Lab 3 design justification
-  lab3-teardown-output.txt   Lab 3 teardown evidence
+  lab_2/               Lab 2 handout, data contract, lineage diagram, run outputs
+  lab_3/               Lab 3 handout, Pre-Lab 3 (Bedrock access), evaluation report, design doc,
+                       teardown output; results/ (earlier experiment grid), agent/ (Converse-agent runs)
+    lab3-evidence/     Lab 3 graded evidence (see "Where artifacts land")
 ```
 
 ## Lab 2 additions — data and feature engineering
@@ -85,8 +84,8 @@ definitions (`customer_id`, `event_time` Fractional, 13 features, `churn_label` 
 The online store is enabled, and the offline store lives under `features/offline-store/`.
 
 The contract for `processed/customers/` is in
-[`docs/lab2-data-contract.md`](docs/lab2-data-contract.md), and the end-to-end flow is in
-[`docs/lab2-data-lineage.png`](docs/lab2-data-lineage.png).
+[`docs/lab_2/lab2-data-contract.md`](docs/lab_2/lab2-data-contract.md), and the end-to-end flow is in
+[`docs/lab_2/lab2-data-lineage.png`](docs/lab_2/lab2-data-lineage.png).
 
 ### Running the data pipeline end to end
 
@@ -122,7 +121,7 @@ feature functions on `northstar-raw-sample.csv`.
 
 Task 1: churn model (XGBoost on the Feature Store, tracked in a SageMaker MLflow App, registered
 as `PendingManualApproval`). Task 2, Track C: a customer service agent on Amazon Bedrock
-AgentCore (Harness + Gateway + Cedar policy engine). Design notes: `docs/lab3-model-design.md`.
+AgentCore (Harness + Gateway + Cedar policy engine). Design notes: `docs/lab_3/lab3-model-design.md`.
 
 ### Setup
 
@@ -169,7 +168,7 @@ bash scripts/run-lab3-experiments.sh                    # experiment grid, each 
 PYTHONIOENCODING=utf8 python models/churn/train.py --artifacts-bucket "$BUCKET" \
   --mlflow-arn "$MLFLOW_APP_ARN" --max-depth 4 --eta 0.1 --run-name xgb-d4-eta0.1-final \
   --expected-customers 9999 --register --model-dir .build/model \
-  --output-data-dir docs/lab3-evidence 2>&1 | tee docs/lab3-evidence/train-final.log
+  --output-data-dir docs/lab_3/lab3-evidence 2>&1 | tee docs/lab_3/lab3-evidence/train-final.log
 
 python models/churn/compare_models.py --artifacts-bucket "$BUCKET"   # vs logistic regression / MLP
 python models/churn/test_feature_query.py                # unit tests, no AWS needed
@@ -197,7 +196,7 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/lab3-demo.ipynb
 
 The system prompt lives in `infrastructure/environments/agent/system_prompt.md`; change it and
 re-apply. Bedrock needs the Anthropic use-case form submitted on the account (see
-`docs/bedrock-access-verification.txt`). Three runs of the six scenarios cost about $0.20
+`docs/lab_3/bedrock-access-verification.txt`). Three runs of the six scenarios cost about $0.20
 estimated: $0.14 of model tokens and about $0.06 of runtime (18 sessions at an estimated
 $0.0033 each). Idle sessions are billed, which is why the harness idle timeout stays at 60 s.
 `python agent/rescore_history.py` rescores every saved prompt version with the final rules.
@@ -206,14 +205,14 @@ $0.0033 each). Idle sessions are billed, which is why the harness idle timeout s
 
 ```bash
 python scripts/collect_lab3_evidence.py --track C   # or: bash scripts/collect-lab3-evidence.sh --track C
-bash scripts/teardown-lab3.sh                       # writes docs/lab3-teardown-output.txt
+bash scripts/teardown-lab3.sh                       # writes docs/lab_3/lab3-teardown-output.txt
 bash scripts/teardown-lab2.sh                       # when finished with the data platform
 git tag lab3-submit && git push origin lab3-submit
 ```
 
 Run the collector while everything is still up: it exports AWS state that teardown deletes.
 `collect-lab3-evidence.sh` calls `python3`, so on Windows run the `.py` with the venv's Python
-and save its output to `docs/lab3-evidence/collect-output.txt`. On Git Bash, set `MSYS_NO_PATHCONV=1` for any AWS CLI
+and save its output to `docs/lab_3/lab3-evidence/collect-output.txt`. On Git Bash, set `MSYS_NO_PATHCONV=1` for any AWS CLI
 command whose argument starts with `/`: Git Bash rewrites it into a Windows path. `teardown-lab3.sh`
 now does this itself, so it really deletes the harness's conversation log group.
 
@@ -221,13 +220,13 @@ now does this itself, so it really deletes the harness's conversation log group.
 
 | Artifact | Location |
 |---|---|
-| Graded training run: console log, metrics, plots, slice table | `docs/lab3-evidence/` (`train-final.log`, `evaluation_metrics.json`, `confusion-matrix.png`, `feature-importance.png`, `slice-evaluation.csv`) |
-| Account identity, Athena query, MLflow App and runs, Model Registry, AgentCore config (exported) | `docs/lab3-evidence/` (`account.json`, `athena-query.json`, `mlflow-app.json`, `mlflow-runs.csv`, `model-registry.json`, `agentcore-config.json`, `collect-output.txt`) |
+| Graded training run: console log, metrics, plots, slice table | `docs/lab_3/lab3-evidence/` (`train-final.log`, `evaluation_metrics.json`, `confusion-matrix.png`, `feature-importance.png`, `slice-evaluation.csv`) |
+| Account identity, Athena query, MLflow App and runs, Model Registry, AgentCore config (exported) | `docs/lab_3/lab3-evidence/` (`account.json`, `athena-query.json`, `mlflow-app.json`, `mlflow-runs.csv`, `model-registry.json`, `agentcore-config.json`, `collect-output.txt`) |
 | Model package | Model Registry group `northstar-churn-models` (`PendingManualApproval`); artifact under `s3://<bucket>/artifacts/models/churn/` (deleted by teardown) |
-| Agent evaluation | `docs/lab3-evidence/` (`agent_eval.csv`, `agent-traces.jsonl`, `agent-cost.csv`, `policy-tests.json`, `track-c-failures.md`; runs of the earlier prompt versions in `history/v1_*`, `v2_*`, `v3_*`, every version's `*_system_prompt.md` (v4 is final), and `history/rescored-summary.csv`) |
-| Reports | `docs/lab3-evaluation-report.md` (Task 1), `docs/lab3-model-design.md` (Task 3) |
+| Agent evaluation | `docs/lab_3/lab3-evidence/` (`agent_eval.csv`, `agent-traces.jsonl`, `agent-cost.csv`, `policy-tests.json`, `track-c-failures.md`; runs of the earlier prompt versions in `history/v1_*`, `v2_*`, `v3_*`, every version's `*_system_prompt.md` (v4 is final), and `history/rescored-summary.csv`) |
+| Reports | `docs/lab_3/lab3-evaluation-report.md` (Task 1), `docs/lab_3/lab3-model-design.md` (Task 3) |
 | Earlier experiment grid and model comparison | `docs/lab_3/results/` |
-| Teardown evidence | `docs/lab3-teardown-output.txt` |
+| Teardown evidence | `docs/lab_3/lab3-teardown-output.txt` |
 
 The MLflow App and the Model Registry group are kept (free; later labs use them). Teardown
 deletes the S3 bucket, so the registered model's artifact is gone until the next retrain.

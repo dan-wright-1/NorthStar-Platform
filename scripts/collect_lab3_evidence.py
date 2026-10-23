@@ -12,7 +12,7 @@ Run it AFTER your final training run and evaluation, and BEFORE teardown:
 
     bash scripts/collect-lab3-evidence.sh --track B      # or --track C
 
-Writes to docs/lab3-evidence/:
+Writes to docs/lab_3/lab3-evidence/:
     account.json            who ran this (ties the evidence to your account)
     athena-query.json       the Athena query named in train-final.log
     mlflow-app.json         your MLflow App (name, role, artifact store)
@@ -37,24 +37,24 @@ except ImportError:
     sys.exit("boto3 is not installed in this Python. Activate the environment you train in.")
 
 EVIDENCE_FILES_ALL = [
-    ("docs/lab3-evidence/train-final.log",         "Task 1: console log of your FINAL training run (tee)"),
-    ("docs/lab3-evidence/evaluation_metrics.json", "Task 1: written by the training script (--output-data-dir docs/lab3-evidence)"),
-    ("docs/lab3-evidence/slice-evaluation.csv",    "Task 1: per-tier n, positives, AUC, recall"),
-    ("docs/lab3-evidence/confusion-matrix.png",    "Task 1: at your chosen threshold"),
-    ("docs/lab3-evidence/feature-importance.png",  "Task 1: from the registered model"),
-    ("docs/lab3-evaluation-report.md",             "Task 1: the evaluation report"),
-    ("docs/lab3-model-design.md",                  "Task 3: design justification (track declared at top)"),
-    ("docs/bedrock-access-verification.txt",       "Task 4: from Pre-Lab 3"),
+    ("docs/lab_3/lab3-evidence/train-final.log",         "Task 1: console log of your FINAL training run (tee)"),
+    ("docs/lab_3/lab3-evidence/evaluation_metrics.json", "Task 1: written by the training script (--output-data-dir docs/lab_3/lab3-evidence)"),
+    ("docs/lab_3/lab3-evidence/slice-evaluation.csv",    "Task 1: per-tier n, positives, AUC, recall"),
+    ("docs/lab_3/lab3-evidence/confusion-matrix.png",    "Task 1: at your chosen threshold"),
+    ("docs/lab_3/lab3-evidence/feature-importance.png",  "Task 1: from the registered model"),
+    ("docs/lab_3/lab3-evaluation-report.md",             "Task 1: the evaluation report"),
+    ("docs/lab_3/lab3-model-design.md",                  "Task 3: design justification (track declared at top)"),
+    ("docs/lab_3/bedrock-access-verification.txt",       "Task 4: from Pre-Lab 3"),
     ("notebooks/lab3-demo.ipynb",                  "Task 2: committed WITH outputs from one clean Restart & Run All"),
 ]
 EVIDENCE_FILES_TRACK = {
-    "B": [("docs/lab3-evidence/rag_eval.csv",       "Task 2B: evaluation_harness.py --track B output, renamed"),
-          ("docs/lab3-evidence/track-b-examples.md", "Task 2B: 5 input/output pairs + 2 failure cases with fixes")],
-    "C": [("docs/lab3-evidence/agent_eval.csv",     "Task 2C: evaluation_harness.py --track C output, renamed"),
-          ("docs/lab3-evidence/agent-traces.jsonl", "Task 2C: one JSON line per tool call (tool, input, output, latency_ms)"),
-          ("docs/lab3-evidence/agent-cost.csv",     "Task 2C: tokens and cost per run"),
-          ("docs/lab3-evidence/track-c-failures.md", "Task 2C: >=2 failure modes, each with a concrete fix"),
-          ("docs/lab3-evidence/policy-tests.json",  "Task 2C: python agent/policy_tests.py (the $50 cap, enforced at the gateway)")],
+    "B": [("docs/lab_3/lab3-evidence/rag_eval.csv",       "Task 2B: evaluation_harness.py --track B output, renamed"),
+          ("docs/lab_3/lab3-evidence/track-b-examples.md", "Task 2B: 5 input/output pairs + 2 failure cases with fixes")],
+    "C": [("docs/lab_3/lab3-evidence/agent_eval.csv",     "Task 2C: evaluation_harness.py --track C output, renamed"),
+          ("docs/lab_3/lab3-evidence/agent-traces.jsonl", "Task 2C: one JSON line per tool call (tool, input, output, latency_ms)"),
+          ("docs/lab_3/lab3-evidence/agent-cost.csv",     "Task 2C: tokens and cost per run"),
+          ("docs/lab_3/lab3-evidence/track-c-failures.md", "Task 2C: >=2 failure modes, each with a concrete fix"),
+          ("docs/lab_3/lab3-evidence/policy-tests.json",  "Task 2C: python agent/policy_tests.py (the $50 cap, enforced at the gateway)")],
 }
 SHARED_METRICS = ("auc_roc", "precision_top10", "recall_top10")
 TOL = 6e-5            # every figure is rounded to 4 dp; allow for that only
@@ -294,7 +294,7 @@ def check_files(track):
 
 
 def check_metrics():
-    p = "docs/lab3-evidence/evaluation_metrics.json"
+    p = "docs/lab_3/lab3-evidence/evaluation_metrics.json"
     if not os.path.isfile(p):
         return None
     try:
@@ -316,7 +316,7 @@ def check_metrics():
 
 
 def check_slices():
-    p = "docs/lab3-evidence/slice-evaluation.csv"
+    p = "docs/lab_3/lab3-evidence/slice-evaluation.csv"
     if not os.path.isfile(p):
         return
     with open(p, newline="") as f:
@@ -352,7 +352,7 @@ def check_notebook():
 
 def check_track(track):
     if track == "C":
-        p = "docs/lab3-evidence/agent-traces.jsonl"
+        p = "docs/lab_3/lab3-evidence/agent-traces.jsonl"
         if os.path.isfile(p):
             recs, bad = [], 0
             for line in open(p):
@@ -367,7 +367,7 @@ def check_track(track):
                 report("FAIL", "agent-traces.jsonl", f"{len(recs)} records, {bad} unparseable, missing fields {lacking}")
             else:
                 report("OK", "agent-traces.jsonl", f"{len(recs)} tool calls")
-        p = "docs/lab3-evidence/policy-tests.json"
+        p = "docs/lab_3/lab3-evidence/policy-tests.json"
         if os.path.isfile(p):
             rs = json.load(open(p)).get("results", [])
             over = [r for r in rs if r.get("tool") == "apply_loyalty_credit" and (r.get("arguments") or {}).get("amount", 0) > 50]
@@ -375,7 +375,7 @@ def check_track(track):
                 report("OK", "policy-tests.json", f"{len(over)} over-cap credits denied at the gateway")
             else:
                 report("FAIL", "policy-tests.json", "an over-cap credit was not denied. Check TODO 3 and re-run agent/policy_tests.py")
-    p = f"docs/lab3-evidence/{'rag' if track == 'B' else 'agent'}_eval.csv"
+    p = f"docs/lab_3/lab3-evidence/{'rag' if track == 'B' else 'agent'}_eval.csv"
     if os.path.isfile(p):
         with open(p, newline="") as f:
             n = sum(1 for _ in csv.DictReader(f))
@@ -392,7 +392,7 @@ def main():
     ap.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
     a = ap.parse_args()
 
-    out = "docs/lab3-evidence"
+    out = "docs/lab_3/lab3-evidence"
     if not os.path.isdir("docs"):
         sys.exit("Run this from the root of your cs401r-<netid> repository (no docs/ here).")
     os.makedirs(out, exist_ok=True)

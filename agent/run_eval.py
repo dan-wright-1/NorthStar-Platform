@@ -3,7 +3,7 @@
     python agent/run_eval.py [--runs 2]
 
 Scores with the course harness (evaluation_harness.LocalAgentEvaluator) and writes
-docs/lab3-evidence/agent_eval.csv, one row per scenario per run, with the agent's full
+docs/lab_3/lab3-evidence/agent_eval.csv, one row per scenario per run, with the agent's full
 reply. harness_client.HarnessAgent appends agent-traces.jsonl and agent-cost.csv as it goes.
 
 Each scenario gets its OWN runtime session (a shared session would carry one scenario's
@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "evaluation"))
 import evaluation_harness as eh                     # noqa: E402
 from agent.harness_client import HarnessAgent       # noqa: E402
 
-OUT = ROOT / "docs" / "lab3-evidence" / "agent_eval.csv"
+OUT = ROOT / "docs" / "lab_3" / "lab3-evidence" / "agent_eval.csv"
 FIELDS = ["run", "scenario_id", "scenario_type", "passed", "strict_passed", "tool_calls",
           "missing_required", "unexpected_forbidden", "escalated", "escalated_by_tool",
           "escalation_expected", "exception_hint", "response"]

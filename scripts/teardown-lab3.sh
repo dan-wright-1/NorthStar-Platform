@@ -106,4 +106,4 @@ echo "[5/5] Verifying"
     echo "    Stopping is NOT deleting - a stopped server can be restarted and still holds storage."
     exit 1
   fi
-} | tee docs/lab3-teardown-output.txt
+} | tee docs/lab_3/lab3-teardown-output.txt

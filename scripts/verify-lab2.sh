@@ -267,18 +267,18 @@ fi
 # ── Tasks 4 and 5: deliverables ────────────────────────────────────────────────
 head2 "Tasks 4 and 5 - Deliverables and repo quality (30 pts)"
 
-for f in docs/lab2-data-contract.md docs/lab2-data-lineage.png \
-         docs/lab2-extend-output.txt infrastructure/modules/glue/main.tf \
+for f in docs/lab_2/lab2-data-contract.md docs/lab_2/lab2-data-lineage.png \
+         docs/lab_2/lab2-extend-output.txt infrastructure/modules/glue/main.tf \
          infrastructure/modules/feature_store/main.tf; do
   [ -f "${f}" ] && ok "${f} present" || bad "${f} present" "missing"
 done
 
-grep -q "Apply complete" docs/lab2-extend-output.txt 2>/dev/null \
+grep -q "Apply complete" docs/lab_2/lab2-extend-output.txt 2>/dev/null \
   && ok "extend output shows Apply complete" \
   || bad "extend output shows Apply complete" "not found in file"
 
 check_section () { # label pattern
-  grep -qiE "$2" docs/lab2-data-contract.md 2>/dev/null \
+  grep -qiE "$2" docs/lab_2/lab2-data-contract.md 2>/dev/null \
     && ok "data contract has $1 section" \
     || bad "data contract has $1 section" "missing"
 }

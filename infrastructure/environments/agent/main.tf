@@ -254,7 +254,7 @@ resource "aws_bedrockagentcore_policy" "permit_tools" {
 #   - amount is an integer in tool_definitions.json, so the cap is rendered as an integer
 #     literal (floor() keeps a fractional variable value from producing invalid Cedar).
 # Limit: this is a PER-CALL rule. It cannot see earlier calls in the session, so two
-# $40 credits (total $80) both pass; see docs/lab3-evidence/track-c-failures.md.
+# $40 credits (total $80) both pass; see docs/lab_3/lab3-evidence/track-c-failures.md.
 resource "aws_bedrockagentcore_policy" "cap_loyalty_credit" {
   name             = "cap_loyalty_credit"
   policy_engine_id = aws_bedrockagentcore_policy_engine.this.policy_engine_id

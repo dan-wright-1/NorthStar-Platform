@@ -1,6 +1,6 @@
 """Rescore every saved agent run with the FINAL scoring rules, so prompt versions compare fairly.
 
-    python agent/rescore_history.py      # writes docs/lab3-evidence/history/rescored-summary.csv
+    python agent/rescore_history.py      # writes docs/lab_3/lab3-evidence/history/rescored-summary.csv
 
 Earlier runs were scored by whatever rules existed at the time (v1 had no strict score, v2's
 strict score ignored hinting). This applies today's rules to the saved replies and tool calls:
@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "evaluation"))
 from agent.run_eval import exception_hint   # noqa: E402
 
-EV = ROOT / "docs" / "lab3-evidence"
+EV = ROOT / "docs" / "lab_3" / "lab3-evidence"
 RUNS = [("v1", EV / "history" / "v1_agent_eval.csv"),
         ("v2", EV / "history" / "v2_agent_eval.csv"),
         ("v3", EV / "history" / "v3_agent_eval.csv"),

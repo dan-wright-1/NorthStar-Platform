@@ -3,7 +3,7 @@ Call the gateway's tools directly (no model in the loop) and record what the
 policy engine allows and denies. This is how you prove the $50 cap is enforced
 by the platform, not by the prompt.
 
-    python agent/policy_tests.py            # writes docs/lab3-evidence/policy-tests.json
+    python agent/policy_tests.py            # writes docs/lab_3/lab3-evidence/policy-tests.json
 
 Run it after TODO 3 is in place. Every test calls the real tools Lambda, so an
 ALLOW really applies a (mock) credit.
@@ -29,7 +29,7 @@ except ImportError:
 
 TF_DIR = Path("infrastructure/environments/agent")
 TARGET = "northstar-tools"
-OUT = Path("docs/lab3-evidence/policy-tests.json")
+OUT = Path("docs/lab_3/lab3-evidence/policy-tests.json")
 
 
 def gateway_url() -> str:

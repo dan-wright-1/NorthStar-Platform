@@ -1,6 +1,6 @@
 # Superseded: client-side Converse agent (first Track C build)
 
-> The graded Track C agent is the AgentCore build in `agent/` and `infrastructure/environments/agent/`, with evidence in `docs/lab3-evidence/`. The handout was updated mid-lab to require AgentCore. This folder documents the earlier Converse-loop agent, now in `agent-converse/`, kept for reference.
+> The graded Track C agent is the AgentCore build in `agent/` and `infrastructure/environments/agent/`, with evidence in `docs/lab_3/lab3-evidence/`. The handout was updated mid-lab to require AgentCore. This folder documents the earlier Converse-loop agent, now in `agent-converse/`, kept for reference.
 
 Code is in `agent-converse/`. Demo notebook: `agent-converse/demo.ipynb` (executed, outputs saved). Re-run with
 `python agent-converse/run_eval.py` after `aws login` and `eval "$(aws configure export-credentials --format env)"`.
