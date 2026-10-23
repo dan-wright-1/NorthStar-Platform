@@ -4,7 +4,7 @@
 #   make local-validate   apply vpc/storage/iam against LocalStack and save the
 #                         evidence to $(LOCAL_OUT)
 #                           Lab 1: make local-validate
-#                           Lab 2: make local-validate LOCAL_OUT=docs/lab2-localstack-output.txt
+#                           Lab 2: make local-validate LOCAL_OUT=docs/lab_2/lab2-localstack-output.txt
 #   make local-destroy    tear the LocalStack stack down
 #   make local-clean      also drop local state and LocalStack data
 

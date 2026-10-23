@@ -92,7 +92,7 @@ done
 echo "[3/7] terraform destroy"
 mkdir -p docs
 terraform -chdir="${TF_DIR}" destroy -auto-approve -input=false ${TF_DESTROY_ARGS:-} 2>&1 \
-  | tee docs/lab2-destroy-output.txt | tail -5
+  | tee docs/lab_2/lab2-destroy-output.txt | tail -5
 
 # ── 4. Orphaned SageMaker EFS (the one that keeps billing) ────────────────────
 # With retention_policy { home_efs_file_system = "Delete" } on the Domain this
@@ -146,10 +146,10 @@ for sg in $(aws ec2 describe-security-groups \
 done
 
 # If destroy failed earlier because of the above, a second pass now succeeds.
-if grep -q "Error:" docs/lab2-destroy-output.txt 2>/dev/null; then
+if grep -q "Error:" docs/lab_2/lab2-destroy-output.txt 2>/dev/null; then
   echo "      re-running destroy now that blockers are cleared"
   terraform -chdir="${TF_DIR}" destroy -auto-approve -input=false ${TF_DESTROY_ARGS:-} 2>&1 \
-    | tee -a docs/lab2-destroy-output.txt | tail -3
+    | tee -a docs/lab_2/lab2-destroy-output.txt | tail -3
 fi
 
 # ── 6. Orphaned SageMaker lineage entities ────────────────────────────────────

@@ -17,8 +17,8 @@ contract that `evaluation_harness.py`'s LocalAgentEvaluator expects:
     EOF
 
 Every call appends evidence (the rubric's file names):
-    docs/lab3-evidence/agent-traces.jsonl   one JSON object per tool call
-    docs/lab3-evidence/agent-cost.csv       one row per run
+    docs/lab_3/lab3-evidence/agent-traces.jsonl   one JSON object per tool call
+    docs/lab_3/lab3-evidence/agent-cost.csv       one row per run
 
 Requires boto3 >= 1.43.57 (the first version this was verified on). Older SDKs
 have no `invoke_harness` and fail with an AttributeError.
@@ -33,7 +33,7 @@ from pathlib import Path
 
 import boto3
 
-EVIDENCE = Path("docs/lab3-evidence")
+EVIDENCE = Path("docs/lab_3/lab3-evidence")
 TF_DIR = Path("infrastructure/environments/agent")
 
 # Haiku 4.5 through the us. inference profile (AWS Price List, us-east-1, 2026-10-05).

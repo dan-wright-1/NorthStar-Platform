@@ -87,7 +87,7 @@ trees from after early stopping.
 the baseline. At the graded configuration, adding it gives AUC 0.7858 against 0.7831,
 precision@10% 0.7167 against 0.7400, and recall@10% 0.3258 against 0.3364 (MLflow run
 `xgb-d4-eta0.1-risk`, ID `06630ff4c77c4f2198e7ed03a97a180d`; output and log in
-[`docs/lab_3/results/xgb-d4-eta0.1-risk/`](lab_3/results/xgb-d4-eta0.1-risk/)).
+[`docs/lab_3/results/xgb-d4-eta0.1-risk/`](results/xgb-d4-eta0.1-risk/)).
 A depth-6 pair gave 0.7784 against 0.7787. Neither shows a consistent gain. AUC and
 inner-validation AUC (0.7855 against 0.7848) tick up slightly, but on the 300 customers the
 business would actually contact it does worse (215 churners caught instead of 222). I left it
