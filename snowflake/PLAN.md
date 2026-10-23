@@ -65,6 +65,53 @@ recommendation to NorthStar's CDO and CFO.
 | Capability gaps | What can't one platform do? | Trial blockers so far (online features, DMFs); real-time serving TBD (Lab 5+) |
 | Lock-in | How hard is it to leave? | Open: Iceberg as the mitigation to evaluate |
 
+### Outcome contract (Labs 1–3)
+
+Matching the AWS architecture is not the target. Matching the business outcomes is. Labs 1–3
+are one value chain: **governed customer data → features you can trust → a ranked churn
+list and an agent that follows policy**. Lab 3 is where the chain first pays off, and Labs
+1–2 matter because Lab 3's numbers depend on them.
+
+"Outcome parity" is defined by the tests below. They don't depend on the platform, and both
+builds must pass them. A course requirement that isn't one of these tests is how AWS gets
+there, and isn't rebuilt.
+
+| Lab | Business outcome | Acceptance test (same on both platforms) | Snowflake-native way |
+|---|---|---|---|
+| 1 | A cost-capped workspace where PII tiers are separated by least privilege, rebuildable from code | ML role is denied a query on `RAW`/`PROCESSED`; spend cap fires; rebuild from the repo | Schemas as zones, database roles, resource monitor (probe 01), DCM or Terraform (D6) |
+| 2 | Leakage-free, contract-checked features ready before the weekly run | **Same `data_sha256` over the 9,999-customer feature set as the AWS graded run** (`0ce8644a…`); contract assertions pass; no post-T data | Dynamic tables, swap-gated contract table, Feature Store `FeatureView` |
+| 3A | A churn ranking that provably beats recency, with a human gate before production | On the same split, metrics within the D10 tolerance of AWS (AUC 0.7831, P@10% 0.74, lift CI [0.040, 0.080]); P@10% ≥ 0.50, R@10% ≥ 0.25, lift CI excludes 0; one chain of numbers; nothing scores in production without approval | Notebook on Container Runtime: `generate_training_set` → XGBoost → Model Registry |
+| 3C | An agent that resolves routine contacts, holds policy under pressure, and can't overspend credits | The course harness unchanged (5 scenarios + injection) through a new `invoke_fn`; the 7 policy cases **plus split-credit denied**; a trace per tool call; cost per run | Cortex Agent; tools = Cortex Search (policy), SQL (orders), stored procedures (return, credit, escalate) |
+
+The Lab 2 hash match is the cheapest strong parity test. If the features hash the same,
+feature parity is proven, and model parity follows from the same training code (up to the
+XGBoost version, as the Lab 3 handout notes).
+
+**Not rebuilt because they're AWS implementation details:** VPC/NAT/SGs and the Glue NETWORK
+connection; "Athena under your own creds, not MLEngineer" (an IAM workaround; the outcome is
+that the training data can be traced back to the feature platform, and the native evidence
+is the `generate_training_set` query ID plus lineage); MLflow App vs Tracking Server (a cost
+trap only AWS has); endpoints; the separate Terraform root for the 6.x provider; harness
+log-group cleanup.
+
+**Where Snowflake changes the answer:**
+1. **The split-credit hole closes natively.** On AWS, Cedar checks each call alone, so two
+   $40 credits pass, and closing it needs temporal policies a harness can't use today. Here,
+   `apply_loyalty_credit` is an owner's-rights procedure that checks `SUM(amount)` in a
+   `CREDIT_LEDGER` table (scope: D11) and inserts in the same transaction. The agent role
+   gets `USAGE` on the procedure and no write access to the ledger. Trade-off: it's code,
+   not a declarative policy like Cedar. The isolation comes from the role boundary.
+2. **Scoring happens where marketing already reads.** The Monday 6 AM list is
+   `model.run()` in a scheduled Task writing a table. No endpoint, no batch transform, no
+   copy back.
+3. **Conversation logs fall under one set of rules.** The AWS harness log group kept full
+   conversations with no retention limit. Agent traces land in an event table covered by
+   the same masking and retention as customer data (GDPR/CCPA).
+4. **Model approval is the weak spot.** The registry has no `PendingManualApproval` status.
+   Design: a `PRODUCTION` alias or tag only an approver role can set, and the scoring task
+   reads only that alias. Probe first: logging a version and setting an alias may both
+   need ownership of the model, which would put both on the same role.
+
 ---
 
 ## 1. The mental-model shift (read this first)
@@ -175,17 +222,34 @@ Also set up now:
 | **Lineage diagram** | Hand-drawn PNG | Snowsight shows lineage between objects automatically (Enterprise) | Compare the drawn version with the generated one. |
 | **Teardown** | `teardown-lab2.sh` for resources Terraform misses | `DROP DATABASE`; warehouses cost nothing while suspended | Teardown is close to trivial. |
 
-### Labs 3–7 (not released yet; provisional, revise each week)
+### Lab 3 (built on AWS: Track A + Track C; concrete)
+
+Acceptance tests are in §0 "Outcome contract". Feature status on a trial changes fast:
+each row marked *probe* gets one before it gets a design.
+
+| Lab item | AWS implementation | Snowflake equivalent | What changes |
+|---|---|---|---|
+| **Training data** | Feature Store offline table via Athena, local creds; query ID in the log | `FeatureStore.generate_training_set()` (point-in-time `ASOF JOIN`) on `ML_ENGINEER`; query ID + lineage as evidence | The IAM workaround disappears: `ML_ENGINEER` already has `FEATURES` read |
+| **Training** | Local XGBoost (or spot training job) | Same `train.py` logic in a Notebook on Container Runtime; pin the XGBoost version to the AWS run's (3.4.1) | Compute pool on trial: *probe* |
+| **Experiment tracking** | SageMaker MLflow App (serverless) | Snowflake experiment tracking if the trial has it; otherwise metrics on registry versions | *probe*; no Tracking-Server cost trap to avoid |
+| **Registry + human gate** | Model Registry, `PendingManualApproval` | Model Registry; `PRODUCTION` alias/tag set only by an approver role | No approval status; privilege split is a *probe* (§0, point 4) |
+| **Evaluation** (bootstrap CI, slices, plots) | Python in `train.py` | Same Python, unchanged | Platform-neutral; it's the parity check |
+| **LLM** | Bedrock, Haiku 4.5 via `us.` inference profile | Cortex, Claude via cross-region inference (D2) | Blocked until D4 |
+| **Agent loop** | AgentCore Harness | **Cortex Agent** | Managed on both |
+| **Tools** | Gateway (MCP) → one Lambda | Cortex Search over `northstar-policy-docs/` (`query_policy`); SQL over orders (`lookup_order`); stored procedures (`initiate_return`, `apply_loyalty_credit`, `escalate_to_human`) | Custom procedure tools: *probe* |
+| **$50 cap** | Cedar `forbid`, per call; split-credit hole open | Owner's-rights procedure + `CREDIT_LEDGER`, cumulative check in one transaction | **Hole closes** (§0, point 1) |
+| **Traces + cost** | `harness_client.py` → JSONL/CSV; log group with no retention | Event table traces (AI Observability: *probe*); Cortex usage views in `ACCOUNT_USAGE` | Traces fall under the same retention + masking as the data |
+| **Harness** | `LocalAgentEvaluator(invoke_fn=HarnessAgent().invoke)` | Same harness, new `invoke_fn` calling the Cortex Agent REST API | Same test, so same scoreboard |
+| **Teardown** | `teardown-lab3.sh`: endpoints, jobs, AgentCore stack, log group | Nothing bills while idle; drop the agent and search service if wanted | Close to trivial |
+
+### Labs 4–7 (not released yet; provisional, revise each week)
 
 | Course capability | AWS (expected) | Snowflake candidate | Risk on a trial |
 |---|---|---|---|
-| LLM access (Pre-Lab 3) | Bedrock | **Cortex AI functions** (`AI_COMPLETE` etc.) | Needs a card on file (§2). Trial Cortex usage is also capped per day. |
 | Model training (Pre-Lab 4) | SageMaker training jobs | `snowflake-ml-python` in a Notebook on Container Runtime, or ML Jobs | Notebooks are allowed on trials; check that compute pools are too. |
-| Model registry | SageMaker Model Registry | **Snowflake Model Registry** | Low |
 | Weekly batch scoring (Mon 6 AM ET) | Batch transform + scheduler | `model.run()` from SQL in a **Task** on a CRON schedule | Low. This is Snowflake's strongest area. |
 | RAG offers (<2 s) | Bedrock + vector store / KB | **Cortex Search** over a product/offer table + `AI_COMPLETE` | Medium. Measure the latency instead of assuming it. |
 | Real-time model endpoint | SageMaker endpoint | Model serving on **Snowpark Container Services** | **High: SPCS isn't available on trials** beyond notebooks. Plan a documented gap. |
-| Customer service agent | Bedrock Agents / custom | **Cortex Agents** (+ Snowflake Intelligence) | Medium (needs Cortex) |
 | CI/CD | GitHub Actions + Terraform | GitHub Actions + `snow` CLI + Terraform; Snowflake Git integration | Low |
 | Monitoring / drift | SageMaker Model Monitor, CloudWatch | **ML Observability** model monitors, DMFs, Alerts | Medium (Enterprise) |
 
@@ -270,6 +334,9 @@ graded repo. See the decision in §9.
 | D6 | IaC tooling | DCM Projects only / Terraform (account level) + DCM (inside the database) / Terraform only. ML objects (Feature Store, Registry) are created in Python either way | _open: probe whether DCM can define the Lab 1 objects (DB, schemas, stages, roles, grants, warehouse, resource monitor). The existing monitor was created by hand and must be adopted by whichever tool wins_ |
 | D8 | When to upgrade off the trial | Before the Lab 2 rebuild (DMFs need it) / later, with DMFs as a documented gap until then | _open: probe whether calling a system DMF directly (unscheduled) works on the trial, e.g. `SELECT SNOWFLAKE.CORE.NULL_COUNT(SELECT customer_id FROM t);`_ |
 | D7 | Transform style | SQL + Dynamic Tables / Snowpark Python port / both, to compare | _proposed: both for Lab 2_ |
+| D9 | Definition of parity | Outcome contract (§0): `data_sha256` match + metric tolerance + same harness / architecture match | _proposed: outcome contract_ |
+| D10 | Metric tolerance for 3A parity | Exact at the same XGBoost version and split / a fixed ± band | _open: set before building, so a mismatch means a bug, not noise_ |
+| D11 | Credit-cap scope | Per session (matches the course) / per customer over a window (stronger business control) | _open_ |
 
 ---
 
