@@ -26,3 +26,10 @@ tfplan
 
 # Course Discord notes (classmates' names and messages): kept locally, never committed
 docs/lab_3/Discord.md
+
+# Snowflake key-pair auth: private keys live in ~/.snowflake/keys, never here
+*.p8
+.snowflake/
+
+# Snowflake brand template (20 MB source for snowflake/docs/icons); not committed
+snowflake/docs/Snowflake_Template_2026.potx/
