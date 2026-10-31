@@ -49,8 +49,24 @@ resource "aws_iam_policy" "ml_engineer" {
           "sagemaker:CreateMlflowApp", "sagemaker:DescribeMlflowApp", "sagemaker:ListMlflowApps",
           "sagemaker:CreatePresignedMlflowAppUrl",
           "sagemaker:RegisterModel", "sagemaker:DescribeModelPackage", "sagemaker:ListModelPackages",
+          # Lab 4: the SageMaker Pipeline runs as this role. Its RegisterModel
+          # step calls CreateModelPackage, and pipelines tag every job they create.
+          "sagemaker:CreateModelPackage", "sagemaker:AddTags", "sagemaker:ListTags",
+          # RegisterModel also creates the package group when it is missing.
+          "sagemaker:CreateModelPackageGroup", "sagemaker:DescribeModelPackageGroup",
         ]
         Resource = "*"
+      },
+      {
+        # Lab 4: the pipeline starts a training job and hands it this same role,
+        # which is an iam:PassRole call. Scoped to this role and to SageMaker.
+        Sid      = "PassSelfToSageMaker"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = aws_iam_role.ml_engineer.arn
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "sagemaker.amazonaws.com" }
+        }
       },
       {
         # ListBucket is a bucket-level action -- it has to target the bare
@@ -198,6 +214,10 @@ resource "aws_iam_policy" "data_engineer" {
           "${local.bucket_arn}/raw/*",
           "${local.bucket_arn}/processed/*",
           "${local.bucket_arn}/features/*",
+          # Glue's S3 layer writes this directory marker when a job overwrites
+          # features/customers/. A re-run fails with AccessDenied without it
+          # (found re-running the feature job for Lab 4).
+          "${local.bucket_arn}/features_$folder$",
         ]
       },
       {

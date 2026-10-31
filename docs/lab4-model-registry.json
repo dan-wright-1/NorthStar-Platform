@@ -1,0 +1,51 @@
+{
+    "ModelPackageSummaryList": [
+        {
+            "ModelPackageGroupName": "northstar-churn-models",
+            "ModelPackageVersion": 5,
+            "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/5",
+            "CreationTime": "2026-10-30T13:16:43.058000-06:00",
+            "ModelPackageStatus": "Completed",
+            "ModelApprovalStatus": "PendingManualApproval",
+            "ModelPackageRegistrationType": "Registered"
+        },
+        {
+            "ModelPackageGroupName": "northstar-churn-models",
+            "ModelPackageVersion": 4,
+            "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/4",
+            "CreationTime": "2026-10-30T12:44:37.085000-06:00",
+            "ModelPackageStatus": "Completed",
+            "ModelApprovalStatus": "Approved",
+            "ModelPackageRegistrationType": "Registered"
+        },
+        {
+            "ModelPackageGroupName": "northstar-churn-models",
+            "ModelPackageVersion": 3,
+            "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/3",
+            "CreationTime": "2026-10-30T12:25:27.927000-06:00",
+            "ModelPackageStatus": "Completed",
+            "ModelApprovalStatus": "Rejected",
+            "ModelPackageRegistrationType": "Registered"
+        },
+        {
+            "ModelPackageGroupName": "northstar-churn-models",
+            "ModelPackageVersion": 2,
+            "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/2",
+            "ModelPackageDescription": "Churn model 20261015T174224Z: AUC 0.7831, P@10% 0.74, R@10% 0.3364, lift over recency baseline 0.059 [0.0397, 0.0795] (XGBoost 3.4.1, risk score excluded)",
+            "CreationTime": "2026-10-15T11:42:32.929000-06:00",
+            "ModelPackageStatus": "Completed",
+            "ModelApprovalStatus": "PendingManualApproval",
+            "ModelPackageRegistrationType": "Registered"
+        },
+        {
+            "ModelPackageGroupName": "northstar-churn-models",
+            "ModelPackageVersion": 1,
+            "ModelPackageArn": "arn:aws:sagemaker:us-east-1:767397742230:model-package/northstar-churn-models/1",
+            "ModelPackageDescription": "Churn model 20261013T034058Z: AUC 0.7831, P@10% 0.74, R@10% 0.3364, lift over recency baseline 0.059 [0.0397, 0.0795] (XGBoost 3.4.1, risk score excluded)",
+            "CreationTime": "2026-10-12T21:41:00.542000-06:00",
+            "ModelPackageStatus": "Completed",
+            "ModelApprovalStatus": "PendingManualApproval",
+            "ModelPackageRegistrationType": "Registered"
+        }
+    ]
+}

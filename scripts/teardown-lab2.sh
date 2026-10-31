@@ -48,7 +48,15 @@ echo ""
 
 # ── 1. Empty the versioned data bucket ─────────────────────────────────────────
 # Do this BEFORE destroy so the S3 delete does not fail with BucketNotEmpty.
-if aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
+#
+# The data bucket is kept by default: it is detached from Terraform state so
+# destroy leaves it (and the Lab 2 data) alone. Rebuild with
+# `bash scripts/data-bucket.sh attach` before `terraform apply`.
+# PERSIST_DATA=0 restores the old behavior and wipes the bucket.
+if [ "${PERSIST_DATA:-1}" = "1" ]; then
+  echo "[1/7] Keeping ${BUCKET}: detaching it from Terraform state"
+  bash "$(dirname "$0")/data-bucket.sh" detach || { echo "      detach failed - aborting before destroy"; exit 1; }
+elif aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
   echo "[1/7] Emptying ${BUCKET} (all versions and delete markers)"
   for key in Versions DeleteMarkers; do
     while true; do

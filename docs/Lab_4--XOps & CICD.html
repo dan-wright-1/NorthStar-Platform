@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Lab 4: XOps + CI/CD Pipeline + Testing</title>
+<style>
+ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+      line-height:1.55;max-width:52rem;margin:2rem auto;padding:0 1.25rem;color:#1a1a1a}
+ code{background:#f4f4f4;padding:.12em .35em;border-radius:3px;font-size:.92em}
+ pre{background:#f4f4f4;padding:1rem;border-radius:5px;overflow-x:auto}
+ pre code{background:none;padding:0}
+ table{border-collapse:collapse;width:100%;margin:1rem 0}
+ th,td{border:1px solid #ccc;padding:.5rem .6rem;text-align:left;vertical-align:top}
+ th{background:#f0f0f0}
+ blockquote{border-left:4px solid #c8102e;margin:1rem 0;padding:.4rem 1rem;background:#fafafa}
+ h1,h2,h3{line-height:1.25} hr{border:none;border-top:1px solid #ddd;margin:2rem 0}
+</style></head><body>
+<h1 id="lab-4-xops-cicd-pipeline-testing">Lab 4: XOps + CI/CD Pipeline + Testing</h1>
+<p><strong>Assigned:</strong> Thu Oct 15 | <strong>Due:</strong> Sat Oct 31, midnight
+<strong>Chapters:</strong> <em>The XOps Stack</em> (Week 06), <em>Testing &amp; Evaluation</em>, <em>XOps and Continuous Delivery</em> (CI/CD sections, Week 08)
+<strong>Builds on:</strong> Labs 1–3 — automates the lifecycle of your Lab 3 churn model
+<strong>Prerequisite:</strong> None beyond Labs 1–3. The pipeline's training step runs on managed spot capacity, which fits within a new account's default quota, so there is no quota request to file.</p>
+<h2 id="objective">Objective</h2>
+<p>Automate everything. A model that requires manual steps to test, evaluate, and deploy is not a production system — it is a science project. This lab builds the pipeline that takes a code commit all the way to a model approved for deployment, without human intervention in the happy path.</p>
+<h2 id="starter-kit-canvas-lab-4">Starter Kit (Canvas: Lab 4)</h2>
+<ul>
+<li><code>buildspec.yml</code> — the CodeBuild build specification. It runs as shipped; read it.</li>
+<li><code>pipeline.yaml</code> — the CloudFormation stack: CodePipeline, CodeBuild, the approval topic and the build-failure alarm.</li>
+<li><code>requirements.txt</code> — what CodeBuild installs in its first phase. Without it every build fails before a test runs. Add to it if your own tests import something else.</li>
+<li><code>pytest.ini</code> — puts the repo root on the import path so plain <code>pytest tests/</code> can import <code>data/feature_engineering.py</code>. Keep it at the repo root.</li>
+<li><code>tests/test_data.py</code>, <code>tests/test_features.py</code>, <code>tests/test_model.py</code> — populated pytest suites covering the processed dataset, the Lab 2 feature functions, and the Lab 3 model contract. Several assertions are left as <code>TODO</code> for you to implement.</li>
+<li><code>tests/conftest.py</code> — registers <code>--model-path</code> and <code>--eval-metrics-path</code>. Leave it where it is; pytest only reads <code>pytest_addoption</code> from <code>conftest.py</code>.</li>
+<li><code>models/churn/pipeline_definition.py</code> — defines the SageMaker Pipeline (spot training step, then <code>RegisterModel</code> as <code>PendingManualApproval</code>). The buildspec runs it on every build. Don't edit it.</li>
+<li><code>models/churn/train_sagemaker.py</code> — the training job's entry point. It reads the staged data, calls your <code>churn_model.train()</code>, and writes the model and metrics where SageMaker, the CI gate and Lab 5's serving container expect them. Don't edit it.</li>
+<li><code>models/churn/churn_model.py</code> — <strong>template you complete.</strong> Your Lab 3 training logic goes here, behind a three-name contract described at the top of the file.</li>
+</ul>
+<hr />
+<h2 id="getting-your-repository">Getting Your Repository</h2>
+<p>Keep working in the repository you created for Lab 1, <code>cs401r-&lt;your-netid&gt;</code>.
+This lab extends the platform you already built; <strong>do not start a new repository.</strong></p>
+<p>Lab 4 ships <strong>new</strong> starter files. Download the Lab 4 starter kit from Canvas (or copy
+them from <a href="https://github.com/byu-cs401r4-f26/cs401r-lab4-template" target="_blank" rel="noopener">https://github.com/byu-cs401r4-f26/cs401r-lab4-template</a>) into your existing
+repository before you begin. Add to what you have — do not replace it.</p>
+<h3 id="submitting-lab-4">Submitting Lab 4</h3>
+<p>When you are ready to submit, tag the commit you want graded and push the tag:</p>
+<pre><code class="language-bash">git tag lab4-submit
+git push origin lab4-submit
+</code></pre>
+<p>Then submit <strong>your repository URL</strong> in Canvas. You do not submit the tag name —
+it is always <code>lab4-submit</code> for this lab, and the TA looks for it.</p>
+<p>The TA grades <code>git checkout lab4-submit</code>, so anything you push afterwards while
+starting the next lab does not change this lab's grade. <strong>If you forget the tag, you
+are graded at your last commit before the Canvas deadline</strong> — which, if you have already
+started the next lab, may not be the work you meant to submit. Tag it.</p>
+<blockquote>
+<p><strong>Public repositories, deliberately.</strong> You may read how other students approached
+the problem. Copying their work is plagiarism and is handled under the BYU Honor
+Code — commit your own. And because these are public: never commit credentials.
+No <code>.env</code>, no <code>terraform.tfvars</code>, no AWS keys. Committed secrets are an automatic
+zero. The provided <code>.gitignore</code> already excludes them; do not remove those lines.</p>
+</blockquote>
+<hr />
+<h2 id="before-you-deploy-anything-six-prerequisites">Before you deploy anything — six prerequisites</h2>
+<p>None of these are created for you, and each one fails in a way that does not
+name the real cause. Do them first.</p>
+<p><strong>1. An artifacts bucket, versioned.</strong> CodePipeline needs a working bucket of
+its own for stage artifacts. This is <strong>not</strong> the <code>northstar-dev-data-&lt;account&gt;</code>
+data bucket and must not be pointed at it. Versioning is required — CodePipeline
+will not use an unversioned bucket.</p>
+<pre><code class="language-bash">AB=northstar-dev-cicd-artifacts-$(aws sts get-caller-identity --query Account --output text)
+aws s3api create-bucket --bucket &quot;$AB&quot;
+aws s3api put-bucket-versioning --bucket &quot;$AB&quot; \
+  --versioning-configuration Status=Enabled
+</code></pre>
+<p><strong>2. A GitHub connection, created and authorized <em>before</em> the stack.</strong> A
+CodeStar connection created by CloudFormation is born <code>PENDING</code>, and a
+<code>PENDING</code> connection can only be completed by a human in the console — so a
+stack that creates its own connection comes up "successfully" with a Source
+stage that can never pull. Create it once, authorize it, then pass the ARN in.</p>
+<pre><code class="language-bash">aws codeconnections create-connection \
+  --provider-type GitHub --connection-name northstar-github
+# Console: Developer Tools → Settings → Connections → Update pending connection
+aws codeconnections list-connections \
+  --query &quot;Connections[?ConnectionName=='northstar-github'].[ConnectionStatus,ConnectionArn]&quot; \
+  --output text
+</code></pre>
+<p>It must read <strong><code>AVAILABLE</code></strong> before the pipeline will run.</p>
+<p><strong>3. Your training code must be in <code>models/churn/churn_model.py</code>, and the
+SageMaker Pipeline must exist.</strong> The build triggers a pipeline named
+<code>northstar-churn-pipeline</code>; a <code>start-pipeline-execution</code> against a pipeline that
+was never defined fails with <code>ValidationException</code>. <code>pipeline_definition.py</code>
+creates it (and the <code>northstar-churn-models</code> package group if it is missing),
+and the buildspec upserts it on every build so each execution is pinned to the
+commit that triggered it.</p>
+<p>The training job runs your code, not ours. Implement <code>train(df, seed=42)</code> in
+<code>churn_model.py</code> from your Lab 3 script: split, train, baseline, evaluate,
+return <code>(booster, metrics)</code>. Three rules, all explained in the file:</p>
+<ul>
+<li><strong>Copy the functions in. Don't import your Lab 3 script.</strong> Only <code>models/churn/</code> is
+  uploaded to the training job, so <code>import churn_training_skeleton</code> works on
+  your laptop and fails in the container.</li>
+<li><strong>No <code>mlflow</code> or <code>sagemaker</code> imports at the top.</strong> The XGBoost container doesn't
+  ship them. MLflow tracking stays in your Lab 3 script.</li>
+<li><strong>The metrics dict needs <code>precision_top10</code>, <code>recall_top10</code>, <code>lift_ci_low</code> and
+  <code>lift_ci_high</code>.</strong> Your Lab 3 <code>evaluate_model()</code> already returns all four, and
+  the CI gate reads them.</li>
+</ul>
+<p>Test it on your machine before you push. A broken contract fails in seconds
+here, where a pipeline run takes minutes to tell you the same thing:</p>
+<pre><code class="language-bash">pip install -r requirements.txt
+mkdir -p /tmp/channel &amp;&amp; aws s3 cp s3://&lt;your-data-bucket&gt;/features/customers/ /tmp/channel/ --recursive
+python models/churn/train_sagemaker.py --train-channel /tmp/channel \
+  --model-dir /tmp/model --output-data-dir /tmp/out
+cp /tmp/out/model_metadata.json /tmp/model/
+EVAL_METRICS_PATH=/tmp/out/evaluation_metrics.json \
+  pytest tests/test_model.py --model-path /tmp/model/xgboost-model
+</code></pre>
+<p>Expect your numbers to differ a little between your laptop and the pipeline.
+The training container runs XGBoost 1.7; you probably have 3.x. On the
+reference data both pass every gate.</p>
+<p>When the training step fails in the pipeline, the build log shows only
+<code>AlgorithmError: ExecuteUserScriptError</code>. The reason is in the training job's
+own log, under <code>/aws/sagemaker/TrainingJobs</code> in CloudWatch Logs.</p>
+<p><strong>4. Your MLEngineer role must be allowed to pass itself to SageMaker.</strong> The
+SageMaker Pipeline runs <em>as</em> MLEngineer and starts a training job that is
+handed the same role, which is an <code>iam:PassRole</code> call. Labs 1–3 never needed
+it because you started training as yourself. Without it, every run fails 30
+seconds into the SageMaker Pipeline with <code>... is not authorized to perform:
+iam:PassRole on resource: .../northstar-dev-MLEngineer</code>. Add this statement to
+the MLEngineer policy in your <code>modules/iam/main.tf</code> and <code>terraform apply</code>:</p>
+<pre><code class="language-hcl">{
+  Sid       = &quot;PassSelfToSageMaker&quot;
+  Effect    = &quot;Allow&quot;
+  Action    = [&quot;iam:PassRole&quot;]
+  Resource  = aws_iam_role.ml_engineer.arn
+  Condition = { StringEquals = { &quot;iam:PassedToService&quot; = &quot;sagemaker.amazonaws.com&quot; } }
+},
+</code></pre>
+<p>While you are there, confirm the policy has <code>sagemaker:AddTags</code> and
+<code>sagemaker:ListTags</code>: pipelines tag every job they create.</p>
+<p><strong>5. Lab 2's stack is up, and its feature job ran in the last 48 hours.</strong> Every
+build reads <code>raw/</code>, <code>processed/</code> and <code>features/</code> from your data bucket, and the
+freshness test you write in Task 1 fails a feature set older than 48 hours. Re-run
+the feature job (about 90 seconds) at the start of any session in which you
+will push:</p>
+<pre><code class="language-bash">aws glue start-job-run --job-name northstar-dev-feature-engineer
+</code></pre>
+<p>If you tore Lab 2 down, re-apply it and re-run its whole pipeline first, and
+wait for <code>terraform apply</code> to finish before starting a Glue job. A job started
+while the NAT route is still being created fails with <code>Could not find S3
+endpoint or NAT gateway</code>.</p>
+<p><strong>6. Deploy with <code>CAPABILITY_NAMED_IAM</code></strong>, not <code>CAPABILITY_IAM</code> — the template
+creates named roles. <code>GitHubRepo</code> is <strong>your</strong> repository, <code>cs401r-&lt;your-netid&gt;</code>.</p>
+<pre><code class="language-bash">aws cloudformation deploy \
+  --template-file pipeline.yaml --stack-name northstar-cicd \
+  --parameter-overrides \
+      ProjectName=northstar Environment=dev \
+      GitHubOwner=YOUR_GITHUB_USERNAME GitHubRepo=cs401r-&lt;your-netid&gt; \
+      GitHubBranch=main ArtifactsBucket=&quot;$AB&quot; \
+      GitHubConnectionArn=&lt;arn from step 2&gt; \
+      SageMakerRoleArn=$(terraform -chdir=infrastructure/environments/dev \
+                          output -raw ml_engineer_role_arn) \
+  --capabilities CAPABILITY_NAMED_IAM
+</code></pre>
+<p>Creating the stack starts a pipeline run immediately on whatever is on <code>main</code>,
+so push your work first. After that, <strong>every push to <code>main</code> runs the whole
+pipeline</strong>, including a training job, even if you changed only <code>docs/</code>.</p>
+<blockquote>
+<p><strong>The training job runs on spot capacity, and that is deliberate.</strong> On a new
+AWS account the on-demand training quota is <strong>0</strong> for every instance type, so an
+on-demand TrainingStep fails with <code>ResourceLimitExceeded</code>. Spot training quota is
+not zero: <code>ml.m5.large for spot training job usage</code> (<code>L-29688C85</code>) defaults to
+<strong>4</strong>. That is why the estimator in <code>pipeline_definition.py</code> sets:</p>
+<p><code>python
+max_run=1800,              # hard cap on training time
+use_spot_instances=True,   # managed spot, not on-demand
+max_wait=3600,             # total budget incl. waiting for capacity; must be &gt;= max_run</code></p>
+<p>Keep all three. Remove <code>use_spot_instances</code> and you're back to a quota of zero.</p>
+<p>AWS can reclaim spot capacity mid-job. If it does, SageMaker waits for capacity
+and restarts the job, within <code>max_wait</code>. This job trains in about two minutes, so
+restarting from scratch is cheap and it needs no checkpointing. A job that trains
+for hours would need checkpoints to survive an interruption. Knowing which side
+of that line a workload falls on is a design decision you should be able to explain.</p>
+<p>Confirm your spot quota before the first run. Any value of 1 or more works:</p>
+<p><code>bash
+aws service-quotas get-service-quota --service-code sagemaker \
+  --quota-code L-29688C85 --query 'Quota.Value' --output text</code></p>
+</blockquote>
+<h2 id="tasks">Tasks</h2>
+<h3 id="task-1-test-suite-30-points">Task 1 — Test Suite (30 points)</h3>
+<p>Build a test suite that runs automatically in CI. Tests must be executable via <code>pytest tests/</code> from the repo root.</p>
+<p><strong>Required test categories:</strong></p>
+<p><strong>Data validation tests</strong> (<code>tests/test_data.py</code>):
+- Schema check: all required columns present across raw, processed, and features
+- Grain check: processed data stays at transaction level (many rows per customer)
+- Leakage check: <code>churn_label</code> is not perfectly separable by recency alone
+- Distribution checks: bounded features within [0, 1]; frequency windows monotonic (180d ≥ 90d ≥ 30d)
+- Freshness check: latest <code>event_time</code> &lt; 48 hours old</p>
+<blockquote>
+<p><strong>A missing dataset must FAIL, not skip.</strong> The supplied <code>test_data.py</code> fails loudly when it cannot find pipeline output, and requires <code>ALLOW_MISSING_DATA=1</code> to defer. If you weaken that, <code>pytest tests/</code> goes green having validated nothing, and your Task 2 pipeline gate becomes decorative.</p>
+</blockquote>
+<p><strong>Feature engineering unit tests</strong> (<code>tests/test_features.py</code>):
+- At least 5 unit tests for feature computation functions
+- Cover: normal case, boundary case (customer with 0 purchases), edge case (single transaction)</p>
+<p><strong>Model evaluation test</strong> (<code>tests/test_model.py</code>):
+- Precision@top10% ≥ 0.50 and recall@top10% ≥ 0.25
+- <strong>Baseline gate: the 95% CI on (model AUC − recency-only baseline AUC) must exclude zero.</strong> Your training script has to emit <code>baseline_auc_roc</code> and the CI bounds alongside <code>auc_roc</code> for this to be checkable. This is the gate that stops a model that has learned nothing beyond "days since last purchase" from reaching the registry.
+- <strong>There is deliberately no absolute AUC threshold.</strong> A fixed AUC gate was removed on 2026-08-02: across 200 splits of the same data the reference model fell below the old 0.72 bar on 58% of them, so the gate was testing the random seed. Report AUC, gate on the interval.
+- Regression test: new model AUC ≥ (champion model AUC − 0.02)
+- Prediction shape: output is a probability between 0 and 1 for every input</p>
+<p><strong>Fairness check</strong> (<code>tests/test_fairness.py</code>):
+- Use SageMaker Clarify or a manual slice evaluation
+- Flag (do not block) if recall gap between highest and lowest loyalty tier exceeds 10 percentage points
+- <code>buildspec.yml</code> runs this file in the build phase, next to <code>test_model.py</code>, once it exists. It reads the same <code>EVAL_METRICS_PATH</code>, so the simplest design has <code>train()</code> put per-tier results in its metrics dict. Expect the flag to fire on this data; the point is that it is visible to the approver, not that it is quiet.</p>
+<p><strong>Make the regression test leave a record.</strong> A passing test prints nothing under <code>pytest -v</code>, so a log can't show <em>which</em> champion it compared against. Have the test call <code>warnings.warn(f"champion v{version} auc={champ_auc:.4f}; candidate auc={new_auc:.4f}")</code> before it asserts. The buildspec runs <code>test_model.py</code> with <code>-rw</code>, so that line lands in the warnings summary of the build log. If no package is <code>Approved</code> yet, the test has nothing to compare against. Approve the version from an earlier green run before your final green run (see <em>Evidence You Submit</em>).</p>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+<th>Evidence (in your <code>lab4-submit</code> commit)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>All 4 test categories implemented</td>
+<td>12</td>
+<td>Each category has ≥2 passing tests</td>
+<td>The four files in <code>tests/</code>, plus <code>docs/lab4-build-green.log</code> showing each of <code>test_data.py</code>, <code>test_features.py</code>, <code>test_model.py</code> and <code>test_fairness.py</code> running with ≥2 <code>PASSED</code> lines apiece. <code>SKIPPED</code> does not count as passing. The fairness flag should appear in the warnings summary</td>
+</tr>
+<tr>
+<td>≥5 feature unit tests with edge cases</td>
+<td>10</td>
+<td>Tests cover normal, boundary, and edge cases</td>
+<td><code>tests/test_features.py</code> (the TA reads the test names and bodies), plus ≥5 <code>test_features.py ... PASSED</code> lines in <code>docs/lab4-build-green.log</code></td>
+</tr>
+<tr>
+<td>Regression test compares against champion</td>
+<td>8</td>
+<td>Test retrieves champion AUC from Model Registry and fails if new model regresses. The champion is the newest <strong>Approved</strong> package: the candidate under test is already registered as <code>PendingManualApproval</code> when the test runs</td>
+<td>The test code in <code>tests/test_model.py</code>. <code>docs/lab4-build-green.log</code> shows the regression test <code>PASSED</code> (not skipped), with your <code>champion vN auc=...</code> warning. <code>docs/lab4-model-registry.json</code> shows version N as <code>Approved</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="task-2-cicd-pipeline-30-points">Task 2 — CI/CD Pipeline (30 points)</h3>
+<p>Implement a CI/CD pipeline that connects: <strong>code push → test → build → evaluate → register</strong>.</p>
+<p><strong>Acceptable implementations:</strong> AWS CodePipeline, GitHub Actions, or GitLab CI (your choice — document the rationale).</p>
+<p><strong>Required pipeline phases.</strong> Your pipeline must perform all five of these, in
+this order:</p>
+<ol>
+<li><strong>Source</strong> — triggered by push to <code>main</code> branch</li>
+<li><strong>Test</strong> — runs <code>pytest tests/</code>; pipeline fails and alerts if any test fails</li>
+<li><strong>Build</strong> — packages training code; runs SageMaker Training Job with the new code</li>
+<li><strong>Evaluate</strong> — runs the promotion gate against the new model's metrics</li>
+<li><strong>Register</strong> — promotes model to SageMaker Model Registry with status <code>PendingManualApproval</code> if all gates pass</li>
+</ol>
+<p><strong>The model the pipeline trains is yours.</strong> The Build phase runs
+<code>models/churn/train_sagemaker.py</code>, which does no training itself: it calls
+<code>train()</code> in <code>models/churn/churn_model.py</code>, and the kit ships that function as a
+TODO. Before the pipeline can go green, turn your Lab 3 training code into
+<code>train(df, seed=42)</code>. It takes the labeled feature DataFrame and returns
+<code>(xgboost.Booster, metrics)</code>. Copy your Lab 3 functions into
+<code>churn_model.py</code>: preprocessing, the XGBoost model, the recency-only baseline,
+and <code>evaluate_model()</code>. Then call them in that order. The contract and three
+rules are under prerequisite 3 above and at the top of the file. Run the
+local test there before your first push.</p>
+<p>Two consequences for grading:</p>
+<ul>
+<li><strong>A pipeline running the unmodified template can't score here.</strong> Its Build
+  phase stops on the template's <code>NotImplementedError</code>, so no run reaches
+  Register.</li>
+<li><strong>The gate in Evaluate checks your model, not ours.</strong> Precision and recall
+  at the top 10%, and a lift CI that excludes zero, are the same bars Lab 3 set.
+  A Lab 3 model that cleared them will clear them here, provided <code>train()</code>
+  reproduces your Lab 3 preprocessing, split and hyperparameters.</li>
+</ul>
+<blockquote>
+<p><strong>Five phases is not five CodePipeline stages, and you are not required to
+make them line up.</strong> A CodePipeline <em>stage</em> is a deployment boundary — it
+exists so artifacts can hand off and so a human can be inserted between two
+points. A CI <em>phase</em> is a logical step. Forcing one stage per phase means
+passing the model artifact between stages and standing up a CodeBuild project
+per stage, which buys nothing here.</p>
+<p>The reference implementation uses <strong>three</strong> CodePipeline stages:</p>
+<table>
+<thead>
+<tr>
+<th>CodePipeline stage</th>
+<th>Phases it performs</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Source</code></td>
+<td>Source</td>
+<td>CodeStar connection → GitHub <code>main</code></td>
+</tr>
+<tr>
+<td><code>Build</code></td>
+<td>Test, Build, Evaluate, Register</td>
+<td><code>buildspec.yml</code>: <code>pre_build</code> runs <code>pytest tests/</code>; <code>build</code> upserts and runs the SageMaker Pipeline, which trains and registers; then the gate runs against the emitted metrics</td>
+</tr>
+<tr>
+<td><code>ManualApproval</code></td>
+<td>the human promotion decision</td>
+<td>SNS-notified approval action</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Where registration sits.</strong> The SageMaker Pipeline registers before
+CodeBuild runs <code>tests/test_model.py</code>. A model that fails a gate <em>inside</em>
+training never registers: keep Lab 3's <code>evaluate_model()</code> raising, and the
+training step fails first. A model that fails a CodeBuild-only test is
+already in the registry, so <code>buildspec.yml</code>'s <code>post_build</code> sets that package
+to <code>Rejected</code>. Either way, a red build leaves nothing approvable behind.</p>
+<p>Grading is on the five <strong>phases</strong> being present, ordered and enforced — not
+on the stage count in the console. Document your mapping either way.</p>
+</blockquote>
+<p><strong>Gate behavior:</strong>
+- The pipeline must halt at the failed phase — not silently skip
+- A failed gate must halt the build <strong>and</strong> notify. The stack creates a CloudWatch alarm <code>northstar-ci-build-failure</code> and an SNS topic <code>northstar-model-approvals</code>; subscribe an address to the topic:</p>
+<pre><code class="language-bash">aws sns subscribe --topic-arn &lt;ModelApprovalTopicArn from stack outputs&gt; \
+  --protocol email --notification-endpoint you@example.com
+</code></pre>
+<p>Then click the confirmation link in the email. Until you do, the alarm still
+reports <em>Successfully executed action</em> (SNS accepted the message) and nothing
+reaches you.</p>
+<blockquote>
+<p><strong>Two traps in the notification path, both of which fail silently.</strong> Wiring an
+alarm is the easy part; proving it can actually tell you something is the
+exercise.</p>
+<p><strong>1. <code>post_build</code> does not always run.</strong> It runs when the <em>build</em> phase fails,
+but <strong>not</strong> when <code>pre_build</code> fails — CodeBuild goes straight to <code>FINALIZING</code>
+and skips it entirely. So a metric published from <code>post_build</code> is absent for
+exactly the failure the rubric asks you to demonstrate. The reference alarm
+watches <code>AWS/CodeBuild</code> <code>FailedBuilds</code>, which CodeBuild emits itself and which
+no phase failure can skip. If you publish your own metric instead, prove it
+survives a <em>test</em> failure, not just a gate failure.</p>
+<p><strong>2. An SNS topic policy that omits <code>cloudwatch.amazonaws.com</code> breaks
+notification without breaking the alarm.</strong> The alarm still evaluates, still
+transitions to <code>ALARM</code>, still turns the console red — and publishes nothing.
+The only evidence is one line here:</p>
+<p>```bash
+aws cloudwatch describe-alarm-history --alarm-name northstar-ci-build-failure \
+  --history-item-type Action --max-records 5</p>
+<h1 id="failed-to-execute-action-arnawssnsnorthstar-model-approvals">Failed to execute action arn:aws:sns:...:northstar-model-approvals</h1>
+<p>```</p>
+<p>Run that command against your own alarm. <strong>An alarm that fires and cannot
+notify is worse than no alarm, because it looks like coverage.</strong> Note also
+that SNS rejects a multi-statement topic policy unless every statement has a
+unique <code>Sid</code>.</p>
+<p><strong>How to demonstrate all of this:</strong> start with the alarm in <code>OK</code> (an alarm
+notifies on a state <em>change</em>; one already in <code>ALARM</code> sends nothing new). Add a
+deliberately failing assertion to <code>tests/</code>, push, and confirm four things:
+the run halts in the phase that owns tests, the Model Registry gains <strong>no</strong>
+new version, the alarm goes <code>ALARM</code>, and <code>describe-alarm-history</code> says
+<em>Successfully executed action</em>. Then revert and confirm the reverse: green
+build, registry gains a version, alarm returns to <code>OK</code>.</p>
+<p><em>Successfully executed action</em> means SNS <strong>accepted</strong> the message. It does not
+mean anyone received it (see the confirmation-link note above). Delivery is
+proved by the email itself and by a confirmed subscription.</p>
+</blockquote>
+<p><strong>Recording the demonstration.</strong> A claim that the registry "gained no version"
+needs a <em>before</em> to compare against, so take three snapshots: before you push
+the failure, after the failed run, and after the revert. Define this once in
+your shell (bash or zsh), from the repo root, while the CI stack is still up:</p>
+<pre><code class="language-bash">TOPIC=$(aws cloudformation describe-stacks --stack-name northstar-cicd \
+  --query &quot;Stacks[0].Outputs[?OutputKey=='ModelApprovalTopicArn'].OutputValue&quot; --output text)
+
+snap () {   # usage: snap &quot;LABEL&quot;  -&gt; appends a labelled snapshot to docs/lab4-failure-demo.txt
+  {
+    echo; echo &quot;===== $1  ($(date -u +%Y-%m-%dT%H:%M:%SZ)) =====&quot;
+    echo &quot;--- newest CodeBuild build: id, commit, status, then phases&quot;
+    B=$(aws codebuild list-builds-for-project --project-name northstar-ci --query 'ids[0]' --output text)
+    aws codebuild batch-get-builds --ids &quot;$B&quot; --query 'builds[0].[id,resolvedSourceVersion,buildStatus]' --output text
+    aws codebuild batch-get-builds --ids &quot;$B&quot; --query 'builds[0].phases[].[phaseType,phaseStatus]' --output text
+    echo &quot;--- newest 3 model packages&quot;
+    aws sagemaker list-model-packages --model-package-group-name northstar-churn-models \
+      --sort-by CreationTime --sort-order Descending --max-results 3 \
+      --query 'ModelPackageSummaryList[].[ModelPackageVersion,ModelApprovalStatus,CreationTime]' --output text
+    echo &quot;--- alarm state&quot;
+    aws cloudwatch describe-alarms --alarm-names northstar-ci-build-failure \
+      --query 'MetricAlarms[0].[StateValue,StateUpdatedTimestamp]' --output text
+    echo &quot;--- alarm action history&quot;
+    aws cloudwatch describe-alarm-history --alarm-name northstar-ci-build-failure \
+      --history-item-type Action --max-records 5 --query 'AlarmHistoryItems[].[Timestamp,HistorySummary]' --output text
+    echo &quot;--- SNS subscriptions (an ARN, not PendingConfirmation)&quot;
+    aws sns list-subscriptions-by-topic --topic-arn &quot;$TOPIC&quot; --query 'Subscriptions[].[Protocol,SubscriptionArn]' --output text
+  } 2&gt;&amp;1 | tee -a docs/lab4-failure-demo.txt
+}
+</code></pre>
+<p>Then:</p>
+<ol>
+<li><code>snap "BEFORE"</code>: the alarm reads <code>OK</code>. Note the newest package version.</li>
+<li>Push the deliberately failing test. Wait for the build to fail <strong>and</strong> for the
+   alarm to reach <code>ALARM</code>, which takes about 2 minutes after the build ends. Then run <code>snap "AFTER FAILED RUN"</code>.
+   Save that build's log as <code>docs/lab4-build-failed.log</code> (the <code>save_log</code> helper is under <em>Evidence You Submit</em>).
+   Screenshot the alarm email you received and save it as <code>docs/lab4-alarm-email.png</code>. Its
+   subject starts <code>ALARM: "northstar-ci-build-failure"</code>, and the screenshot must show the received time. You may blur your address.</li>
+<li>Revert and push. Wait for the green build and for the alarm to return to <code>OK</code>,
+   then run <code>snap "AFTER REVERT"</code>.</li>
+</ol>
+<p>Leave both commits (the deliberate failure and its revert) in your <code>main</code>
+history. They are part of the evidence: the TA can <code>git show</code> the failing
+assertion and match its SHA to the build in <code>lab4-failure-demo.txt</code>.</p>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+<th>Evidence (in your <code>lab4-submit</code> commit)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>All 5 phases present, ordered, with a documented stage mapping</td>
+<td>10</td>
+<td>Pipeline config plus your mapping shows all five; a green run trained <strong>your</strong> Lab 3 model through <code>churn_model.train()</code> (not the unmodified template) and reached Register</td>
+<td><code>buildspec.yml</code> and <code>pipeline.yaml</code> (or your GitHub Actions / GitLab CI file); the <code>## Pipeline Stage Mapping</code> section of <code>docs/lab4-xops-assessment.md</code>, which maps the five phases to stages and gives your rationale; <code>docs/lab4-pipeline-runs.txt</code> with a <code>SUCCEEDED</code> build whose phases run through <code>POST_BUILD</code>; <code>docs/lab4-build-green.log</code> showing the SageMaker Pipeline <code>Succeeded</code> and a model package registered. The TA runs <code>git show &lt;commit&gt;:models/churn/churn_model.py</code> on that build's commit SHA to confirm <code>train()</code> is yours, not the template</td>
+</tr>
+<tr>
+<td>Pipeline halts correctly on test failure</td>
+<td>8</td>
+<td>Your deliberate test failure stopped the run in the phase that owns tests, and it did <strong>not</strong> reach Register</td>
+<td><code>docs/lab4-failure-demo.txt</code>, <code>AFTER FAILED RUN</code>: build <code>FAILED</code>, <code>PRE_BUILD FAILED</code>, no <code>BUILD</code> phase. <code>docs/lab4-build-failed.log</code> showing the failing assertion. The deliberate-failure commit is in <code>main</code> history, and its SHA matches the build</td>
+</tr>
+<tr>
+<td>Model Registry promotion only on green gates</td>
+<td>6</td>
+<td>The registry gained <strong>no</strong> version on the failed run, and gained a <code>PendingManualApproval</code> version on the clean one</td>
+<td><code>docs/lab4-failure-demo.txt</code>: the newest version is the same in <code>BEFORE</code> and <code>AFTER FAILED RUN</code>, and <code>AFTER REVERT</code> shows one more version, <code>PendingManualApproval</code>. Cross-checked against <code>docs/lab4-model-registry.json</code></td>
+</tr>
+<tr>
+<td>Failure notification demonstrably delivers</td>
+<td>6</td>
+<td>On the failed run the alarm reached <code>ALARM</code>, SNS accepted the notification, and it reached a confirmed subscriber</td>
+<td><code>docs/lab4-failure-demo.txt</code>: <code>OK</code> in <code>BEFORE</code>, <code>ALARM</code> in <code>AFTER FAILED RUN</code>, <em>Successfully executed action</em> in the history, and a subscription ARN rather than <code>PendingConfirmation</code>. Plus <code>docs/lab4-alarm-email.png</code>. An alarm that fires without delivering scores 0 here</td>
+</tr>
+</tbody>
+</table>
+<p>The TA has no access to your AWS account, so Task 2 is graded from the
+evidence files in your tagged commit, not by re-running your pipeline.</p>
+<h3 id="task-3-mlops-configuration-20-points">Task 3 — MLOps Configuration (20 points)</h3>
+<p>Document and implement the MLOps configuration for the churn model lifecycle.</p>
+<p><strong>Required artifacts</strong> in <code>pipeline/</code> or <code>docs/lab4-xops-assessment.md</code>:</p>
+<ul>
+<li><strong>Champion-challenger definition</strong>: When is a new model "better enough" to replace the champion? Write the numeric criterion.</li>
+<li><strong>Retraining triggers</strong>: Define (a) a scheduled trigger (e.g., weekly) and (b) a performance-based trigger (e.g., AUC drops below threshold on production data). Both must be automatable — not manual decisions.</li>
+<li><strong>Experiment tracking</strong>: Show your <strong>MLflow App</strong> (created in Lab 3) tracking at least 3 hyperparameter combinations with their metrics. Include <code>mlflow.search_runs</code> output or a screenshot of the comparison view.</li>
+</ul>
+<blockquote>
+<p><strong>Your pipeline will create SageMaker Experiments whether you ask it to or not.</strong> A SageMaker Pipeline auto-creates an Experiment named after the pipeline and one Trial per execution — the reference account has <code>northstar-churn-pipeline</code> with 11 trials and <code>SourceType: SageMakerPipeline</code>, none of which anyone requested. So you will see Experiments in the console even though this course tracks with MLflow.</p>
+<p><strong>Do not submit those as your experiment-tracking evidence.</strong> They record <em>that a pipeline ran</em>, not <em>what you varied and what it did to the metrics</em>. That distinction is the point of the requirement. Auto-generated lineage is free and nearly content-free; deliberate tracking is the thing that costs you effort and earns the marks.
+- <strong>Model lineage</strong>: For each model version in the Registry, the associated training data version (S3 URI + timestamp), code commit SHA, and evaluation metrics must be stored as model card metadata. The pipeline's <code>RegisterModel</code> step records only the artifact and a pointer to the metrics. The commit SHA (the training job's <code>COMMIT_SHA</code> environment variable) and the data URI (its input channel) are on the <strong>training job</strong>. Copy them onto the package with <code>update-model-package --customer-metadata-properties</code>, either from your own shell after a run or from the buildspec (the CodeBuild role may call <code>UpdateModelPackage</code>). Then save the package description. <code>describe-model-package</code> needs the full <strong>ARN</strong>: the short form <code>northstar-churn-models/N</code> is rejected with a <code>ValidationException</code>.</p>
+</blockquote>
+<pre><code class="language-bash">ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+N=&lt;the version your final green run registered&gt;
+aws sagemaker describe-model-package \
+  --model-package-name &quot;arn:aws:sagemaker:us-east-1:${ACCOUNT}:model-package/northstar-churn-models/${N}&quot; \
+  &gt; docs/lab4-model-package.json
+</code></pre>
+<p><strong>Saving your MLflow runs.</strong> Printing a <code>search_runs</code> DataFrame truncates the
+<code>params.*</code> columns to <code>...</code>, which hides the thing being graded. Write the
+whole table instead:</p>
+<pre><code class="language-python">runs = mlflow.search_runs(experiment_names=[&quot;northstar-churn-lab4&quot;])   # your experiment name
+cols = [&quot;run_id&quot;, &quot;tags.mlflow.runName&quot;, &quot;start_time&quot;] + \
+       [c for c in runs.columns if c.startswith((&quot;params.&quot;, &quot;metrics.&quot;))]
+with open(&quot;docs/lab4-mlflow-runs.txt&quot;, &quot;w&quot;) as f:
+    f.write(f&quot;tracking_uri: {mlflow.get_tracking_uri()}\n\n{runs[cols].to_string()}\n&quot;)
+</code></pre>
+<p>A screenshot of the MLflow comparison view, saved as <code>docs/lab4-mlflow-compare.png</code>, is optional extra support. It does not replace the text file.</p>
+<p>Write the champion–challenger criterion and both retraining triggers under the
+headings <code>## Champion-Challenger</code> and <code>## Retraining Triggers</code> in
+<code>docs/lab4-xops-assessment.md</code>, so the TA can find them.</p>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+<th>Evidence (in your <code>lab4-submit</code> commit)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Champion-challenger criterion is numeric and binary</td>
+<td>5</td>
+<td>Criterion is a specific number, not "if it is better"</td>
+<td><code>## Champion-Challenger</code> in <code>docs/lab4-xops-assessment.md</code></td>
+</tr>
+<tr>
+<td>Both retraining triggers defined and automatable</td>
+<td>8</td>
+<td>Each trigger has a specific threshold and names the AWS service that would fire it</td>
+<td><code>## Retraining Triggers</code> in <code>docs/lab4-xops-assessment.md</code>: for each trigger, the threshold or schedule expression and the AWS service that fires it. Designed, not deployed, is fine</td>
+</tr>
+<tr>
+<td>Experiment tracking shows ≥3 runs</td>
+<td>4</td>
+<td>≥3 <strong>MLflow App</strong> runs with differing hyperparameters and logged metrics. Pipeline-auto-generated Experiments do not count</td>
+<td><code>docs/lab4-mlflow-runs.txt</code>: a tracking URI that is an MLflow App ARN (<code>...:mlflow-app/...</code>), and ≥3 rows whose <code>params.*</code> values differ and whose <code>metrics.*</code> are filled in</td>
+</tr>
+<tr>
+<td>Model lineage metadata stored in Model Registry</td>
+<td>3</td>
+<td><code>describe_model_package()</code> output shows training data URI and commit SHA</td>
+<td><code>docs/lab4-model-package.json</code>: <code>CustomerMetadataProperties</code> contains the training data S3 URI, its timestamp, the commit SHA and the evaluation metrics. The commit SHA must be one the TA can find in your <code>main</code> history</td>
+</tr>
+</tbody>
+</table>
+<h3 id="task-4-xops-maturity-assessment-20-points">Task 4 — XOps Maturity Assessment (20 points)</h3>
+<p>Write a ~400-word maturity assessment in <code>docs/lab4-xops-assessment.md</code>.</p>
+<p>For <strong>DataOps</strong> and <strong>MLOps</strong> (the two disciplines you have implemented so far), assess your NorthStar platform against the Level 0–4 maturity model from the chapter.</p>
+<p><strong>Structure:</strong></p>
+<pre><code class="language-markdown">## DataOps Maturity
+Current level: [0/1/2/3/4]
+Evidence: [Specific artifacts from Labs 1–4 that support this assessment]
+Gap to Level [N+1]: [What is the specific missing capability?]
+Top priority investment: [One concrete change that would advance maturity]
+
+## MLOps Maturity
+[Same structure]
+</code></pre>
+<p><strong>Rubric:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Points</th>
+<th>Pass Criteria</th>
+<th>Evidence (in your <code>lab4-submit</code> commit)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Maturity level supported by specific evidence</td>
+<td>10</td>
+<td>Assessment references specific files/configs in the repo, not generic claims</td>
+<td><code>## DataOps Maturity</code> and <code>## MLOps Maturity</code> in <code>docs/lab4-xops-assessment.md</code>. Every path you cite must exist at your <code>lab4-submit</code> tag; the TA opens them. Citing a measured result from your own evidence files (for example a line in <code>lab4-build-green.log</code>) is stronger than citing a config file</td>
+</tr>
+<tr>
+<td>Gap analysis is specific, not vague</td>
+<td>6</td>
+<td>"Missing automated drift detection (see Lab 6)" not "need more automation"</td>
+<td>The <code>Gap to Level</code> line of each section</td>
+</tr>
+<tr>
+<td>Priority investment is actionable</td>
+<td>4</td>
+<td>Names a specific tool or practice, not "improve testing"</td>
+<td>The <code>Top priority investment</code> line of each section</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="evidence-you-submit">Evidence You Submit</h2>
+<p>The TA grades your <code>lab4-submit</code> tag <strong>after your AWS stack is gone</strong>. Nothing in
+your account is inspected, and nothing in it survives teardown: CodePipeline
+history goes with the stack, and the CodeBuild logs go when you delete their log
+group. <strong>If the evidence is not committed to the repository, the task was not done.</strong> Every
+rubric item above names its evidence; this section lists the same files in one place
+and shows how to capture them. File names are exact.</p>
+<blockquote>
+<p><strong>Clarified Fri Oct 23, 2026.</strong> This section, the Evidence columns in the rubrics, and four
+files were added after Lab 4 was assigned: <code>lab4-build-green.log</code>,
+<code>lab4-build-failed.log</code>, <code>lab4-model-registry.json</code> and <code>lab4-alarm-email.png</code>.
+The failure demo also now needs a <code>BEFORE</code> snapshot. Everything else was already
+required. If you have already torn your stack down, tell the TA before the deadline.</p>
+</blockquote>
+<h3 id="recommended-order">Recommended order</h3>
+<ol>
+<li><strong>Green run, then approve it.</strong> Get one green run and set its package to <code>Approved</code>. It becomes the champion your regression test compares against:
+   <code>aws sagemaker update-model-package --model-package-arn &lt;arn&gt; --model-approval-status Approved</code></li>
+<li><strong>Failure demo</strong> (Task 2): <code>snap "BEFORE"</code>, push the failing test, <code>snap "AFTER FAILED RUN"</code>, revert, <code>snap "AFTER REVERT"</code>.
+   The revert's green run is your <strong>final green run</strong>. Its regression test runs against the champion from step 1.</li>
+<li><strong>Lineage</strong> (Task 3): write metadata onto the final green run's package, then save <code>docs/lab4-model-package.json</code>.</li>
+<li><strong>MLflow runs</strong> (Task 3): save <code>docs/lab4-mlflow-runs.txt</code>.</li>
+<li><strong>Capture everything else</strong> with the block below. The stack must still be up.</li>
+<li><strong>Delete the CI stack</strong> (see Teardown), <em>then</em> commit <code>docs/</code>, tag and push. Deleting first means the docs push doesn't start one more training run.</li>
+<li>Finish the teardown.</li>
+</ol>
+<h3 id="capture-block">Capture block</h3>
+<p>Run from the repo root before you delete anything. <code>save_log</code> writes a CodeBuild
+build's complete log to a file. It is also used in the failure demo.</p>
+<pre><code class="language-bash">save_log () {   # usage: save_log &lt;codebuild-build-id&gt; &lt;output-file&gt;
+  read -r G S &lt;&lt;&lt; &quot;$(aws codebuild batch-get-builds --ids &quot;$1&quot; \
+      --query 'builds[0].logs.[groupName,streamName]' --output text)&quot;
+  aws logs filter-log-events --log-group-name &quot;$G&quot; --log-stream-names &quot;$S&quot; --output json \
+    | python3 -c 'import json,sys; sys.stdout.write(&quot;&quot;.join(e[&quot;message&quot;] if e[&quot;message&quot;].endswith(&quot;\n&quot;) else e[&quot;message&quot;]+&quot;\n&quot; for e in json.load(sys.stdin)[&quot;events&quot;]))' \
+    &gt; &quot;$2&quot;
+}
+
+# 1. Every run: CodePipeline, CodeBuild (with phases and pytest summary lines), SageMaker Pipeline
+{
+  echo &quot;===== CodePipeline executions: start, status, commit, execution id =====&quot;
+  aws codepipeline list-pipeline-executions --pipeline-name northstar-pipeline \
+    --query 'pipelineExecutionSummaries[].[startTime,status,sourceRevisions[0].revisionId,pipelineExecutionId]' --output text
+  echo; echo &quot;===== CodeBuild builds, newest first: start, status, commit, build id =====&quot;
+  for B in $(aws codebuild list-builds-for-project --project-name northstar-ci --query 'ids[]' --output text); do
+    aws codebuild batch-get-builds --ids &quot;$B&quot; --query 'builds[0].[startTime,buildStatus,resolvedSourceVersion,id]' --output text
+    aws codebuild batch-get-builds --ids &quot;$B&quot; --query 'builds[0].phases[].[phaseType,phaseStatus]' --output text | sed 's/^/    /'
+    save_log &quot;$B&quot; /tmp/lab4-build.log &amp;&amp; grep -E '^=+ .*(passed|failed|error)' /tmp/lab4-build.log | sed 's/^/    pytest: /'
+  done
+  echo; echo &quot;===== SageMaker Pipeline executions: start, status, name =====&quot;
+  aws sagemaker list-pipeline-executions --pipeline-name northstar-churn-pipeline \
+    --query 'PipelineExecutionSummaries[].[StartTime,PipelineExecutionStatus,PipelineExecutionDisplayName]' --output text
+} 2&gt;&amp;1 | tee docs/lab4-pipeline-runs.txt
+
+# 2. The full log of your final green build (the newest SUCCEEDED build above)
+save_log &lt;final-green-build-id&gt; docs/lab4-build-green.log
+
+# 3. Every version in the registry, with approval status and metadata
+aws sagemaker list-model-packages --model-package-group-name northstar-churn-models \
+  --sort-by CreationTime --sort-order Descending --output json &gt; docs/lab4-model-registry.json
+</code></pre>
+<p>Open each file and read it before you tear down. An empty <code>lab4-build-green.log</code>
+usually means the wrong build ID. A <code>pytest:</code> line that reads <code>1 failed</code> on what
+you thought was your green build means it wasn't. None of these files can be
+regenerated once the stack and log group are deleted.</p>
+<h3 id="the-complete-list">The complete list</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Task</th>
+<th>What it must show</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/test_data.py</code>, <code>test_features.py</code>, <code>test_model.py</code>, <code>test_fairness.py</code></td>
+<td>1</td>
+<td>The tests themselves</td>
+</tr>
+<tr>
+<td><code>models/churn/churn_model.py</code></td>
+<td>2</td>
+<td>Your Lab 3 training logic behind <code>train()</code></td>
+</tr>
+<tr>
+<td><code>buildspec.yml</code>, <code>pipeline.yaml</code> (or your CI config)</td>
+<td>2</td>
+<td>The five phases</td>
+</tr>
+<tr>
+<td><code>docs/lab4-build-green.log</code></td>
+<td>1, 2</td>
+<td>Full log of the final green build: every test file's <code>-v</code> output, the champion and fairness warnings, SageMaker Pipeline <code>Succeeded</code>, package registered</td>
+</tr>
+<tr>
+<td><code>docs/lab4-build-failed.log</code></td>
+<td>2</td>
+<td>Full log of the deliberate-failure build: the failing assertion, <code>PRE_BUILD</code> failed</td>
+</tr>
+<tr>
+<td><code>docs/lab4-pipeline-runs.txt</code></td>
+<td>2</td>
+<td>Every run: commit, status, phases, pytest summary, SageMaker Pipeline executions</td>
+</tr>
+<tr>
+<td><code>docs/lab4-failure-demo.txt</code></td>
+<td>2</td>
+<td><code>BEFORE</code>, <code>AFTER FAILED RUN</code> and <code>AFTER REVERT</code> snapshots</td>
+</tr>
+<tr>
+<td><code>docs/lab4-alarm-email.png</code></td>
+<td>2</td>
+<td>The <code>ALARM</code> email as received, with its time</td>
+</tr>
+<tr>
+<td><code>docs/lab4-model-registry.json</code></td>
+<td>1, 2</td>
+<td>Every package version and its approval status, including your <code>Approved</code> champion</td>
+</tr>
+<tr>
+<td><code>docs/lab4-model-package.json</code></td>
+<td>3</td>
+<td>Lineage in <code>CustomerMetadataProperties</code> on the final green run's package</td>
+</tr>
+<tr>
+<td><code>docs/lab4-mlflow-runs.txt</code></td>
+<td>3</td>
+<td>MLflow App tracking URI; ≥3 runs with params and metrics</td>
+</tr>
+<tr>
+<td><code>docs/lab4-xops-assessment.md</code></td>
+<td>2, 3, 4</td>
+<td><code>## Pipeline Stage Mapping</code>, <code>## Champion-Challenger</code>, <code>## Retraining Triggers</code>, <code>## DataOps Maturity</code>, <code>## MLOps Maturity</code></td>
+</tr>
+<tr>
+<td>Git history on <code>main</code></td>
+<td>2</td>
+<td>The deliberate-failure commit and its revert</td>
+</tr>
+</tbody>
+</table>
+<h2 id="teardown-and-cost">Teardown and cost</h2>
+<p><strong>Cost.</strong> A pipeline run costs about $0.02: about five minutes of CodeBuild,
+plus a spot training job that bills about a minute. The Lab 2 NAT Gateway
+costs about $0.045 an hour while the stack is up, so don't leave it running
+between sessions.</p>
+<p><strong>Teardown, in this order.</strong> Run the capture block under <em>Evidence You Submit</em>
+first. Deleting the stack erases CodePipeline's run history, and deleting the log
+group erases every build log. Delete the CI stack before your final docs-only
+push, or that push starts one more training run.</p>
+<pre><code class="language-bash">aws cloudformation delete-stack --stack-name northstar-cicd
+aws cloudformation wait stack-delete-complete --stack-name northstar-cicd
+# the artifacts bucket is versioned: empty it (console &quot;Empty&quot;, or delete all versions), then
+aws s3api delete-bucket --bucket &quot;$AB&quot;
+aws logs delete-log-group --log-group-name /aws/codebuild/northstar-ci
+bash scripts/teardown-lab2.sh        # when you are done with Lab 2's infrastructure
+</code></pre>
+<p>Before the data bucket goes, set any <code>Approved</code> package to <code>Rejected</code>, so no
+approved package points at a deleted artifact.</p>
+</body></html>
